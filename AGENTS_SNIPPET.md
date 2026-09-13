@@ -8,7 +8,7 @@ Project specifications live under `specs/`. For non-trivial architectural, behav
 - `specs/changes/` — lightweight active deltas.
 - `specs/constitution.md` — project-wide guardrails only.
 
-When a concrete code path is known, use `charterleaf related <path>` to locate matching living specs plus active changes that affect them. Otherwise use normal code/text search. Use `charterleaf lint` for structural validation and mechanical active-change conflicts. These commands are helpers, not workflow gates.
+When a concrete code path is known, use `charterleaf related <path>` to locate matching living specs plus active changes that affect them. When the relevant code path is not yet known, use `charterleaf map` only to discover available specification scopes; do not read every listed specification. Use normal code navigation to locate the smallest relevant area, then use `charterleaf related <path>`. For broad project-level questions, start with normal project entry documents; do not expand into every spec or project-state document merely because no path was provided. Use `charterleaf lint` for structural validation and mechanical active-change conflicts. These commands are helpers, not workflow gates.
 
 Authority is `Constitution > Active Change > Living Spec > Current Code`. Do not add authority scores or silently rewrite specs to match code.
 

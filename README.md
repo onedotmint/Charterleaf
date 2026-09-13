@@ -7,9 +7,10 @@ without workflow orchestration.
 
 > **Keep project intent in the repo, without turning specs into a workflow.**
 
-Charterleaf keeps durable project knowledge in Markdown and provides exactly two deterministic helpers:
+Charterleaf keeps durable project knowledge in Markdown and provides exactly three deterministic helpers:
 
 ```bash
+charterleaf map
 charterleaf related <path>
 charterleaf lint
 ```
@@ -37,9 +38,12 @@ No Pi extension or Pi runtime dependency is used.
 Run from a repository root containing `specs/`:
 
 ```bash
+charterleaf map
 charterleaf related src/auth/session.ts
 charterleaf lint
 ```
+
+`map` shows a deterministic, lightweight index of the `specs/` layer when a relevant code path is not yet known. It lists specification scopes and metadata only; it does not summarize specs or recommend what to read. Use normal code navigation to find the smallest relevant area, then use `related <path>`.
 
 `related <path>` performs deterministic path routing. It matches `applies_to` with `*` and `**`, normalizes repo-relative paths to POSIX form, then appends active changes whose `affects` reference a matched Spec ID. Output is stable; no match is success. It is not semantic search.
 
@@ -98,7 +102,7 @@ Charterleaf has no:
 - plugin/extension runtime
 - Git/history abstraction
 
-The two CLI commands are helpers, not workflow gates.
+The three CLI commands are helpers, not workflow gates.
 
 ## Development
 

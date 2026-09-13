@@ -13,7 +13,17 @@ When a concrete code path is known, run:
 charterleaf related <path>
 ```
 
-Read only the returned living specs and active changes. If the location is unknown, use the host agent's normal search tools; Charterleaf does not provide semantic search.
+Read only the returned living specs and active changes.
+
+When the relevant code path is not yet known, run:
+
+```bash
+charterleaf map
+```
+
+Use the map only to discover available specification scopes. Do not read every listed specification by default. Use normal code navigation to locate the smallest relevant area. Once a concrete path is known, run `charterleaf related <path>`.
+
+For broad project-level questions, start with normal project entry documents. Do not expand into every spec or project-state document merely because no path was provided. `map` is not semantic search.
 
 Use authority in this order:
 

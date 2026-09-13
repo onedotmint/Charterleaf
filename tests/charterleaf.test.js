@@ -82,6 +82,89 @@ function withProject(fn) {
   }
 }
 
+test('map: lists the specification layers and metadata', () => withProject((project) => {
+  project.write('specs/engineering/backend.md', ENGINEERING);
+  project.write('specs/decisions/0001-domain-boundary.md', '# Domain boundary\n');
+  project.write('specs/changes/session-lifetime.md', '---\naffects:\n  - auth.session\n---\n# Session lifetime\n');
+  const { code, out, err } = project.run('map');
+  assert.equal(code, 0);
+  assert.equal(err, '');
+  assert.equal(out,
+    'Constitution\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Capabilities\n' +
+    '  auth.session\n' +
+    '    specs/capabilities/auth.md\n' +
+    '    applies_to: src/auth/**, tests/auth/*\n' +
+    '\n' +
+    'Engineering\n' +
+    '  engineering.backend\n' +
+    '    specs/engineering/backend.md\n' +
+    '    applies_to: src/**/*.ts\n' +
+    '\n' +
+    'Decisions\n' +
+    '  specs/decisions/0001-domain-boundary.md\n' +
+    '\n' +
+    'Active changes\n' +
+    '  specs/changes/session-lifetime.md\n' +
+    '    affects: auth.session\n');
+}));
+
+test('map: is stable regardless of file creation order', () => {
+  function outputFor(order) {
+    const project = new Project();
+    try {
+      for (const name of order) {
+        project.write(`specs/capabilities/${name}.md`, `---\nid: ${name}.scope\napplies_to:\n  - src/${name}/**\n---\n# ${name}\n`);
+      }
+      return project.run('map').out;
+    } finally {
+      project.close();
+    }
+  }
+
+  const first = outputFor(['zeta', 'alpha']);
+  const second = outputFor(['alpha', 'zeta']);
+  assert.equal(first, second);
+  assert.ok(first.indexOf('alpha.scope') < first.indexOf('zeta.scope'));
+});
+
+test('map: never prints specification bodies', () => withProject((project) => {
+  project.write('specs/capabilities/auth.md', `${CAPABILITY}\n### AUTH-003 — Secret body marker\nTHIS_TEXT_MUST_NOT_APPEAR_IN_MAP_OUTPUT\n`);
+  const { code, out } = project.run('map');
+  assert.equal(code, 0);
+  assert.doesNotMatch(out, /THIS_TEXT_MUST_NOT_APPEAR_IN_MAP_OUTPUT/);
+}));
+
+test('map: malformed frontmatter is a clear runtime error', () => withProject((project) => {
+  project.write('specs/engineering/broken.md', '---\nid: broken\n');
+  const { code, out, err } = project.run('map');
+  assert.equal(code, 2);
+  assert.equal(out, '');
+  assert.match(err, /ERROR specs\/engineering\/broken\.md: unclosed frontmatter/);
+}));
+
+test('map: missing specs directory is a runtime error', () => withProject((project) => {
+  fs.rmSync(path.join(project.root, 'specs'), { recursive: true });
+  const { code, out, err } = project.run('map');
+  assert.equal(code, 2);
+  assert.equal(out, '');
+  assert.equal(err, 'ERROR specs/: not found\n');
+}));
+
+test('map: validates CLI arguments', () => withProject((project) => {
+  let result = project.run('map', '--help');
+  assert.equal(result.code, 0);
+  assert.equal(result.out, 'Usage: charterleaf map\n');
+  assert.equal(result.err, '');
+
+  result = project.run('map', 'unexpected-arg');
+  assert.equal(result.code, 2);
+  assert.equal(result.out, '');
+  assert.match(result.err, /ERROR: map takes no arguments/);
+}));
+
 test('related: single match', () => withProject((project) => {
   const { code, out, err } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 0);
