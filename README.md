@@ -78,6 +78,8 @@ Keep specs compressed and evidence-based. Prefer contracts over commentary and r
 
 For bug fixes with durable behavioral implications, clarify `Current`, `Expected`, and `PRESERVE` when that reduces accidental scope. Do not create a spec for trivial fixes with no durable implication.
 
+After non-trivial implementation or debugging, record only genuinely durable knowledge: behavior, contracts, invariants, and non-goals in capabilities; long-lived constraints, boundaries, pitfalls, or verification practices in engineering; and important architectural choices in decisions. If nothing durable was learned, do not modify specs. Specs accumulate durable project knowledge, not development activity.
+
 Load the smallest relevant set; do not read the whole tree by default. After an accepted change is implemented, merge the durable result into living specs and delete the change file. Git is the history.
 
 ## Other agents

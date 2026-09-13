@@ -35,6 +35,14 @@ Keep specs compressed and evidence-based. Prefer contracts over commentary and d
 
 Do not touch specs for renames, lint cleanup, routine refactors, temporary debugging, Todo/status changes, or trivial fixes with no durable implication.
 
+After non-trivial implementation or debugging, consider whether durable project knowledge was discovered. If so, record only the durable result:
+
+- observable behavior, contract, invariant, or non-goal → capability spec;
+- long-lived implementation constraint, boundary, recurring pitfall, or required verification practice → engineering spec;
+- important architectural choice, rationale, or revisit condition → decision.
+
+If nothing durable was learned, do not modify specs. Do not record current task status, implementation progress, temporary debugging notes, one-off commands, session history, Todo items, or transient observations. Specs accumulate durable project knowledge, not development activity.
+
 For a durable bug fix, use `Current` and `Expected` when useful and state what must `PRESERVE`. For other durable behavior/contract changes, keep one `specs/changes/<name>.md` delta with only needed `ADD`, `MODIFY`, `REMOVE`, and/or `PRESERVE` sections.
 
 After editing specs, run:

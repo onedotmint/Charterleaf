@@ -16,6 +16,14 @@ Keep specs compressed and evidence-based. Prefer durable contracts and pitfalls 
 
 Do not create specs for temporary implementation details, current tasks, debugging notes, routine refactors, or trivial fixes with no durable implication. For a durable bug fix, use `Current` / `Expected` when useful and explicitly state what must `PRESERVE`.
 
+After non-trivial implementation or debugging, consider whether durable project knowledge was discovered. If so, record only the durable result:
+
+- observable behavior, contract, invariant, or non-goal → capability spec;
+- long-lived implementation constraint, boundary, recurring pitfall, or required verification practice → engineering spec;
+- important architectural choice, rationale, or revisit condition → decision.
+
+If nothing durable was learned, do not modify specs. Do not record current task status, implementation progress, temporary debugging notes, one-off commands, session history, Todo items, or transient observations. Specs accumulate durable project knowledge, not development activity.
+
 For meaningful durable behavior/contract changes, use one change file with only the needed `ADD`, `MODIFY`, `REMOVE`, and/or `PRESERVE` sections. After acceptance and implementation, merge durable results into living specs and delete the change file. Git is the history.
 
 Charterleaf is a knowledge layer, not a workflow layer. It must not manage tasks, planning, agents, execution, review, memory, compression, semantic search, code/spec verification, release lifecycle, or Git history.

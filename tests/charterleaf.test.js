@@ -236,6 +236,41 @@ test('lint: missing spec id', () => withLintProject((project) => {
   assert.match(out, /missing spec id/);
 }));
 
+test('lint: missing applies_to on living spec', () => withLintProject((project) => {
+  project.write('specs/capabilities/missing-scope.md', '---\nid: missing.scope\n---\n# Missing scope\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /ERROR specs\/capabilities\/missing-scope\.md: missing applies_to/);
+}));
+
+test('lint: empty applies_to on living spec', () => withLintProject((project) => {
+  project.write('specs/capabilities/empty-scope.md', '---\nid: empty.scope\napplies_to: []\n---\n# Empty scope\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /ERROR specs\/capabilities\/empty-scope\.md: applies_to must contain at least one path/);
+}));
+
+test('lint: accepts a non-empty applies_to on living spec', () => withProject((project) => {
+  const { code, out } = project.run('lint');
+  assert.equal(code, 0);
+  assert.equal(out, '0 errors\n');
+}));
+
+test('lint: engineering specs require applies_to', () => withLintProject((project) => {
+  project.write('specs/engineering/missing-scope.md', '---\nid: engineering.missing\n---\n# Missing scope\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /ERROR specs\/engineering\/missing-scope\.md: missing applies_to/);
+}));
+
+test('lint: non-living specs do not require applies_to', () => withLintProject((project) => {
+  project.write('specs/decisions/0001-boundary.md', '# Boundary\n');
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Change\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 0);
+  assert.equal(out, '0 errors\n');
+}));
+
 test('lint: duplicate spec id', () => withLintProject((project) => {
   project.write('specs/engineering/duplicate.md', '---\nid: auth.session\napplies_to:\n  - src/**\n---\n# Duplicate\n');
   const { code, out } = project.run('lint');
