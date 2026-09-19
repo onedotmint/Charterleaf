@@ -5,54 +5,145 @@ description: A tiny specification layer for durable project intent and constrain
 
 # Charterleaf
 
-Treat Charterleaf as a small knowledge layer, not a workflow system.
+## Adoption gate
 
-When a concrete code path is known, run:
+Before using Charterleaf in a repository, check whether `specs/` exists.
 
-```bash
-charterleaf related <path>
-```
+If no `specs/` directory exists:
 
-Read only the returned living specs and active changes.
+- do not run Charterleaf;
+- do not create `specs/`;
+- do not recommend adoption automatically;
+- continue using the repository's normal instructions.
 
-When the relevant code path is not yet known, run:
+Charterleaf is opt-in.
 
-```bash
-charterleaf map
-```
+## Boundary
 
-Use the map only to discover available specification scopes. Do not read every listed specification by default. Use normal code navigation to locate the smallest relevant area. Once a concrete path is known, run `charterleaf related <path>`.
+Charterleaf answers one question:
 
-For broad project-level questions, start with normal project entry documents. Do not expand into every spec or project-state document merely because no path was provided. `map` is not semantic search.
+> For this repository path, which durable constraints should I read?
 
-Use authority in this order:
+A project's own reference protocol — its `AGENTS.md` entry and the
+project-owned documents it points to — answers a different question:
 
-```text
-Constitution > Active Change > Living Spec > Current Code
-```
+> Where do this project's authoritative facts live?
 
-Keep specs compressed and evidence-based. Prefer contracts over commentary and durable pitfalls over patterns obvious from code. Never invent aspirational standards; record only demonstrated or explicitly accepted intent.
+Charterleaf owns only: spec taxonomy, durable constraint routing
+(`related`), and structural lint (`lint`).
 
-Do not touch specs for renames, lint cleanup, routine refactors, temporary debugging, Todo/status changes, or trivial fixes with no durable implication.
+Charterleaf does not own: current project state, tasks, workflow,
+planning, memory, evidence, history, session lifecycle, project-wide
+consistency, semantic code/spec verification, or repository state
+synchronization.
 
-After non-trivial implementation or debugging, consider whether durable project knowledge was discovered. If so, record only the durable result:
+## Progressive retrieval
 
-- observable behavior, contract, invariant, or non-goal → capability spec;
-- long-lived implementation constraint, boundary, recurring pitfall, or required verification practice → engineering spec;
-- important architectural choice, rationale, or revisit condition → decision.
+1. **Identify the need.** Orientation, current state, evidence,
+   validation, resources, implementation detail, or durable constraint?
+2. **Locate the owner.** If the owner is known, read it directly. If not,
+   read the project `AGENTS.md` / project instructions. Do not scan the
+   whole repository's Markdown first.
+3. **Enough?** If the authoritative information you have is sufficient,
+   stop reading. Do not keep reading for completeness.
+4. **Expand progressively.** Only when information is insufficient, the
+   owner is unclear, sources conflict, the work area is unknown, or
+   verification is needed — and only one layer at a time.
+5. **Concrete path.** Once work lands on a concrete repository path, run
+   `charterleaf related <path>` and read the returned constraints.
+6. **Work.** Normal implementation, learning, design, or debugging. The
+   reference protocol does not manage workflow.
+7. **Write back.** Changed current fact → its single owner. New evidence
+   → the evidence owner. New or changed durable constraint → `specs/`.
+   Historical event → project history or Git. Future plan → planning
+   docs. Never copy one fact into several files: one owner per fact,
+   other documents point to it.
 
-If nothing durable was learned, do not modify specs. Do not record current task status, implementation progress, temporary debugging notes, one-off commands, session history, Todo items, or transient observations. Specs accumulate durable project knowledge, not development activity.
+## related semantics
 
-For a durable bug fix, use `Current` and `Expected` when useful and state what must `PRESERVE`. For other durable behavior/contract changes, keep one `specs/changes/<name>.md` delta with only needed `ADD`, `MODIFY`, `REMOVE`, and/or `PRESERVE` sections.
+`charterleaf related <path>`:
 
-After editing specs, run:
+- always returns `specs/constitution.md` as Global when it exists;
+- routes `capabilities/` and `engineering/` specs whose `applies_to`
+  glob matches the path;
+- appends active changes whose `affects` reference a returned spec id.
 
-```bash
-charterleaf lint
-```
+`applies_to` is a **routing hint**, not a completeness proof. The message
+`No applies_to glob matched this path.` means exactly that — it never
+means "no constraints apply". On a scoped miss the command lists
+available living specs by `id`, path, and `applies_to` only. Use that
+list to find the right area, then rerun with the concrete path. The
+command never prints spec bodies, ranks relevance, or guesses.
 
-`lint` checks structural conventions and deterministic active-change conflicts only. It does not judge writing, architecture quality, or semantic code/spec drift.
+## lint semantics
 
-After an accepted change is implemented, merge the durable result into living specs and delete the change file. Git keeps history.
+`charterleaf lint` reports mechanical structural problems only:
+frontmatter shape, living-spec ids and `applies_to`, duplicate spec and
+requirement ids, change references, changes whose `ADD` / `MODIFY` /
+`REMOVE` sections are all empty (HTML comments do not count), and
+conflicting active changes.
 
-Do not plan, manage tasks, invoke agents, run implementation/review workflows, manage memory, or replace the host agent's code-navigation tools.
+It does **not** verify semantic correctness, code/spec agreement,
+routing coverage, project compliance, whether a change is complete, or
+whether an Agent read the specs. Success prints `0 structural errors`.
+Run it after editing specs.
+
+## Spec writing discipline
+
+A spec records a constraint whose absence would plausibly cause a future
+developer or agent to make a wrong decision. It should be non-obvious,
+durable, **already true**, and mistake-preventing.
+
+Good fits: contracts, invariants, architecture boundaries, non-goals,
+recurring pitfalls, accepted architectural rationale, verification
+constraints.
+
+Not specs: current state, future design, aspirations, todos,
+implementation plans, session notes, progress, temporary debugging,
+navigation, history. "Already true" matters — what you hope to become is
+a plan, not a living spec.
+
+Place a constraint where it belongs:
+
+- rare project-wide durable boundary → `specs/constitution.md`;
+- observable behavior, contract, invariant, or non-goal →
+  `specs/capabilities/`;
+- implementation boundary, long-lived constraint, recurring pitfall, or
+  verification practice → `specs/engineering/`;
+- important architectural rationale and revisit condition →
+  `specs/decisions/`.
+
+Keep specs compressed. Prefer durable contracts and pitfalls over
+commentary, and never invent aspirational standards.
+
+## changes/ is optional staging
+
+Use `specs/changes/<name>.md` only when an accepted future contract must
+temporarily coexist with current living reality — for example when
+implementation happens in another session or by another agent, human
+review comes first, or a multi-step migration is underway. A change must
+contain at least one of `ADD`, `MODIFY`, `REMOVE`; `PRESERVE` alone is
+not a change.
+
+Otherwise: implement, verify, and update the living spec if durable truth
+changed. After an accepted change is implemented, merge the durable
+result into living specs and delete the change file. Git keeps history.
+
+## Durable learning
+
+After non-trivial implementation or debugging, ask once: did this work
+reveal durable knowledge whose absence could cause a future mistake?
+
+If not, change nothing. If yes, record only the durable constraint in
+the matching category above.
+
+Never record current progress, temporary debug notes, one-off commands,
+session history, todos, or transient observations. Specs accumulate
+durable constraints, not development activity.
+
+## Non-goals
+
+Do not use Charterleaf to manage tasks, planning, workflow, memory,
+evidence, history, repository state, or scope registries. Do not ask it
+to verify semantics, coverage, or project compliance. It finds
+constraints; it does not manage the project.

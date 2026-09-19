@@ -40,6 +40,8 @@ applies_to:
 Domain code MUST stay framework independent.
 `;
 
+const DISHONEST_WORDING = /No constraints apply|No relevant constraints|Nothing applies|No related specs/;
+
 class Project {
   constructor() {
     this.root = fs.mkdtempSync(path.join(os.tmpdir(), 'charterleaf-'));
@@ -82,110 +84,126 @@ function withProject(fn) {
   }
 }
 
-test('map: lists the specification layers and metadata', () => withProject((project) => {
-  project.write('specs/engineering/backend.md', ENGINEERING);
-  project.write('specs/decisions/0001-domain-boundary.md', '# Domain boundary\n');
-  project.write('specs/changes/session-lifetime.md', '---\naffects:\n  - auth.session\n---\n# Session lifetime\n');
-  const { code, out, err } = project.run('map');
+function withLintProject(fn) {
+  return withProject((project) => {
+    project.write('specs/engineering/backend.md', ENGINEERING);
+    return fn(project);
+  });
+}
+
+// CLI surface
+
+test('cli: --help lists only related and lint', () => withProject((project) => {
+  const { code, out, err } = project.run('--help');
   assert.equal(code, 0);
   assert.equal(err, '');
-  assert.equal(out,
-    'Constitution\n' +
-    '  specs/constitution.md\n' +
-    '\n' +
-    'Capabilities\n' +
-    '  auth.session\n' +
-    '    specs/capabilities/auth.md\n' +
-    '    applies_to: src/auth/**, tests/auth/*\n' +
-    '\n' +
-    'Engineering\n' +
-    '  engineering.backend\n' +
-    '    specs/engineering/backend.md\n' +
-    '    applies_to: src/**/*.ts\n' +
-    '\n' +
-    'Decisions\n' +
-    '  specs/decisions/0001-domain-boundary.md\n' +
-    '\n' +
-    'Active changes\n' +
-    '  specs/changes/session-lifetime.md\n' +
-    '    affects: auth.session\n');
+  assert.match(out, /related <path>/);
+  assert.match(out, /lint/);
+  assert.doesNotMatch(out, /map/);
 }));
 
-test('map: is stable regardless of file creation order', () => {
-  function outputFor(order) {
-    const project = new Project();
-    try {
-      for (const name of order) {
-        project.write(`specs/capabilities/${name}.md`, `---\nid: ${name}.scope\napplies_to:\n  - src/${name}/**\n---\n# ${name}\n`);
-      }
-      return project.run('map').out;
-    } finally {
-      project.close();
-    }
-  }
-
-  const first = outputFor(['zeta', 'alpha']);
-  const second = outputFor(['alpha', 'zeta']);
-  assert.equal(first, second);
-  assert.ok(first.indexOf('alpha.scope') < first.indexOf('zeta.scope'));
-});
-
-test('map: never prints specification bodies', () => withProject((project) => {
-  project.write('specs/capabilities/auth.md', `${CAPABILITY}\n### AUTH-003 — Secret body marker\nTHIS_TEXT_MUST_NOT_APPEAR_IN_MAP_OUTPUT\n`);
-  const { code, out } = project.run('map');
-  assert.equal(code, 0);
-  assert.doesNotMatch(out, /THIS_TEXT_MUST_NOT_APPEAR_IN_MAP_OUTPUT/);
-}));
-
-test('map: malformed frontmatter is a clear runtime error', () => withProject((project) => {
-  project.write('specs/engineering/broken.md', '---\nid: broken\n');
+test('cli: map is an unknown command', () => withProject((project) => {
   const { code, out, err } = project.run('map');
   assert.equal(code, 2);
   assert.equal(out, '');
-  assert.match(err, /ERROR specs\/engineering\/broken\.md: unclosed frontmatter/);
+  assert.match(err, /ERROR: unknown command map/);
 }));
 
-test('map: missing specs directory is a runtime error', () => withProject((project) => {
+test('cli: a command is required', () => withProject((project) => {
+  const { code, out, err } = project.run();
+  assert.equal(code, 2);
+  assert.equal(out, '');
+  assert.match(err, /ERROR: a command is required/);
+}));
+
+test('cli: unknown commands are rejected', () => withProject((project) => {
+  const { code, out, err } = project.run('status');
+  assert.equal(code, 2);
+  assert.equal(out, '');
+  assert.match(err, /ERROR: unknown command status/);
+}));
+
+test('related: validates CLI arguments', () => withProject((project) => {
+  let result = project.run('related', '--help');
+  assert.equal(result.code, 0);
+  assert.equal(result.out, 'Usage: charterleaf related <path>\n');
+  assert.equal(result.err, '');
+
+  result = project.run('related');
+  assert.equal(result.code, 2);
+  assert.match(result.err, /ERROR: related requires exactly one path/);
+
+  result = project.run('related', 'a', 'b');
+  assert.equal(result.code, 2);
+  assert.match(result.err, /ERROR: related requires exactly one path/);
+}));
+
+test('related: missing specs directory is a runtime error', () => withProject((project) => {
   fs.rmSync(path.join(project.root, 'specs'), { recursive: true });
-  const { code, out, err } = project.run('map');
+  const { code, out, err } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 2);
   assert.equal(out, '');
   assert.equal(err, 'ERROR specs/: not found\n');
 }));
 
-test('map: validates CLI arguments', () => withProject((project) => {
-  let result = project.run('map', '--help');
-  assert.equal(result.code, 0);
-  assert.equal(result.out, 'Usage: charterleaf map\n');
-  assert.equal(result.err, '');
+// Constitution is global
 
-  result = project.run('map', 'unexpected-arg');
-  assert.equal(result.code, 2);
-  assert.equal(result.out, '');
-  assert.match(result.err, /ERROR: map takes no arguments/);
-}));
-
-test('related: single match', () => withProject((project) => {
+test('related: constitution is Global without frontmatter, id, or applies_to', () => withProject((project) => {
   const { code, out, err } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 0);
-  assert.equal(out, 'specs/capabilities/auth.md\n');
   assert.equal(err, '');
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n');
 }));
 
-test('related: multiple matches and stable order', () => withProject((project) => {
+test('related: constitution is never scoped even when it declares applies_to', () => withProject((project) => {
+  project.write('specs/constitution.md', '---\nid: project.constitution\napplies_to:\n  - src/auth/**\n---\n# Constitution\n');
+  const { code, out } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 0);
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n');
+}));
+
+// Scoped matching
+
+test('related: returns all matching living specs in stable order', () => withProject((project) => {
   project.write('specs/engineering/backend.md', ENGINEERING);
   const { code, out } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 0);
-  assert.equal(out, 'specs/capabilities/auth.md\nspecs/engineering/backend.md\n');
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n' +
+    '  specs/engineering/backend.md\n');
+}));
+
+test('related: decisions are never scoped', () => withProject((project) => {
+  project.write('specs/decisions/0001-domain-boundary.md', '---\napplies_to:\n  - src/auth/**\n---\n# Domain boundary\n');
+  const { code, out } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 0);
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n');
 }));
 
 test('related: star matches one segment', () => withProject((project) => {
-  let result = project.run('related', 'tests/auth/test_session.py');
-  assert.equal(result.code, 0);
-  assert.match(result.out, /specs\/capabilities\/auth\.md/);
-  result = project.run('related', 'tests/auth/unit/test_session.py');
-  assert.equal(result.code, 0);
-  assert.equal(result.out, 'No related specs.\n');
+  assert.match(project.run('related', 'tests/auth/test_session.py').out, /specs\/capabilities\/auth\.md/);
+  const miss = project.run('related', 'tests/auth/unit/test_session.py');
+  assert.equal(miss.code, 0);
+  assert.match(miss.out, /No applies_to glob matched this path\./);
 }));
 
 test('related: double star matches nested segments', () => withProject((project) => {
@@ -200,14 +218,87 @@ test('related: Windows path normalization', () => withProject((project) => {
   assert.match(out, /specs\/capabilities\/auth\.md/);
 }));
 
-test('related: no match is success', () => withProject((project) => {
-  const { code, out, err } = project.run('related', 'src/billing/invoice.ts');
+test('related: living spec without applies_to is not routable', () => withProject((project) => {
+  project.write('specs/capabilities/no-scope.md', '---\nid: no.scope\n---\n# No scope\n');
+  const { code, out } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 0);
-  assert.equal(out, 'No related specs.\n');
-  assert.equal(err, '');
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n');
 }));
 
-test('related: malformed frontmatter is clear runtime error', () => withProject((project) => {
+// Scoped miss
+
+test('related: scoped miss is explicit and lists available living specs', () => withProject((project) => {
+  const { code, out, err } = project.run('related', 'src/billing/invoice.ts');
+  assert.equal(code, 0);
+  assert.equal(err, '');
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  No applies_to glob matched this path.\n' +
+    '\n' +
+    'Available living specs\n' +
+    '  auth.session\n' +
+    '    specs/capabilities/auth.md\n' +
+    '    applies_to: src/auth/**, tests/auth/*\n');
+}));
+
+test('related: scoped miss fallback separates multiple living specs', () => withLintProject((project) => {
+  const { code, out } = project.run('related', 'unrelated/path.ts');
+  assert.equal(code, 0);
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  No applies_to glob matched this path.\n' +
+    '\n' +
+    'Available living specs\n' +
+    '  auth.session\n' +
+    '    specs/capabilities/auth.md\n' +
+    '    applies_to: src/auth/**, tests/auth/*\n' +
+    '\n' +
+    '  engineering.backend\n' +
+    '    specs/engineering/backend.md\n' +
+    '    applies_to: src/**/*.ts\n');
+}));
+
+test('related: scoped miss omits the fallback when no living specs exist', () => {
+  const project = new Project();
+  try {
+    const { code, out } = project.run('related', 'src/anything.ts');
+    assert.equal(code, 0);
+    assert.equal(out,
+      'Global\n' +
+      '  specs/constitution.md\n' +
+      '\n' +
+      'Scoped\n' +
+      '  No applies_to glob matched this path.\n');
+  } finally {
+    project.close();
+  }
+});
+
+test('related: scoped miss never prints spec bodies', () => withProject((project) => {
+  project.write('specs/capabilities/auth.md', `${CAPABILITY}\n### AUTH-003 — Hidden\nTHIS_TEXT_MUST_NOT_APPEAR\n`);
+  const { out } = project.run('related', 'unrelated/path.ts');
+  assert.doesNotMatch(out, /THIS_TEXT_MUST_NOT_APPEAR/);
+  assert.doesNotMatch(out, /AUTH-003/);
+}));
+
+test('related: scoped miss uses honest wording', () => withProject((project) => {
+  const { out } = project.run('related', 'unrelated/path.ts');
+  assert.match(out, /No applies_to glob matched this path\./);
+  assert.doesNotMatch(out, DISHONEST_WORDING);
+}));
+
+test('related: malformed frontmatter is a clear runtime error', () => withProject((project) => {
   project.write('specs/engineering/broken.md', '---\nid: broken\n');
   const { code, out, err } = project.run('related', 'src/auth/session.ts');
   assert.equal(code, 2);
@@ -215,18 +306,78 @@ test('related: malformed frontmatter is clear runtime error', () => withProject(
   assert.match(err, /ERROR specs\/engineering\/broken\.md: unclosed frontmatter/);
 }));
 
-function withLintProject(fn) {
-  return withProject((project) => {
-    project.write('specs/engineering/backend.md', ENGINEERING);
-    return fn(project);
-  });
-}
+test('related: invalid applies_to is a clear runtime error', () => withProject((project) => {
+  project.write('specs/capabilities/bad-scope.md', '---\nid: bad.scope\napplies_to: src/**\n---\n# Bad\n');
+  const { code, out, err } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 2);
+  assert.equal(out, '');
+  assert.match(err, /ERROR specs\/capabilities\/bad-scope\.md: applies_to must be a list of paths/);
+}));
 
-test('lint: valid project', () => withLintProject((project) => {
+// Active changes
+
+test('related: includes active change affecting a matched spec', () => withProject((project) => {
+  project.write('specs/changes/session-rotation.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## MODIFY\n\n### AUTH-001 — Login\n');
+  const { code, out, err } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 0);
+  assert.equal(err, '');
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n' +
+    '\n' +
+    'Active changes\n' +
+    '  specs/changes/session-rotation.md\n');
+}));
+
+test('related: active changes are stable and limited to matched specs', () => withLintProject((project) => {
+  project.write('specs/changes/z-backend.md', '---\naffects:\n  - engineering.backend\n---\n# Backend change\n');
+  project.write('specs/changes/a-session.md', '---\naffects:\n  - auth.session\n---\n# Session change\n');
+  project.write('specs/changes/billing.md', '---\naffects:\n  - billing.invoice\n---\n# Billing change\n');
+  const { code, out } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 0);
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n' +
+    '  specs/engineering/backend.md\n' +
+    '\n' +
+    'Active changes\n' +
+    '  specs/changes/a-session.md\n' +
+    '  specs/changes/z-backend.md\n');
+}));
+
+test('related: does not include active changes for unrelated specs', () => withProject((project) => {
+  project.write('specs/capabilities/billing.md', '---\nid: billing.invoice\napplies_to:\n  - src/billing/**\n---\n# Billing\n');
+  project.write('specs/changes/billing-change.md', '---\naffects:\n  - billing.invoice\n---\n# Billing change\n');
+  const { code, out } = project.run('related', 'src/auth/session.ts');
+  assert.equal(code, 0);
+  assert.equal(out,
+    'Global\n' +
+    '  specs/constitution.md\n' +
+    '\n' +
+    'Scoped\n' +
+    '  specs/capabilities/auth.md\n');
+}));
+
+// Lint
+
+test('lint: valid project reports structural success', () => withLintProject((project) => {
   const { code, out, err } = project.run('lint');
   assert.equal(code, 0);
-  assert.equal(out, '0 errors\n');
+  assert.equal(out, '0 structural errors\n');
   assert.equal(err, '');
+}));
+
+test('lint: constitution needs no id or applies_to', () => withProject((project) => {
+  project.write('specs/constitution.md', '# Constitution\nNo frontmatter here.\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 0);
+  assert.equal(out, '0 structural errors\n');
 }));
 
 test('lint: missing spec id', () => withLintProject((project) => {
@@ -253,7 +404,7 @@ test('lint: empty applies_to on living spec', () => withLintProject((project) =>
 test('lint: accepts a non-empty applies_to on living spec', () => withProject((project) => {
   const { code, out } = project.run('lint');
   assert.equal(code, 0);
-  assert.equal(out, '0 errors\n');
+  assert.equal(out, '0 structural errors\n');
 }));
 
 test('lint: engineering specs require applies_to', () => withLintProject((project) => {
@@ -265,10 +416,10 @@ test('lint: engineering specs require applies_to', () => withLintProject((projec
 
 test('lint: non-living specs do not require applies_to', () => withLintProject((project) => {
   project.write('specs/decisions/0001-boundary.md', '# Boundary\n');
-  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Change\n');
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Change\n\n## MODIFY\n\n### AUTH-001 — Login\n');
   const { code, out } = project.run('lint');
   assert.equal(code, 0);
-  assert.equal(out, '0 errors\n');
+  assert.equal(out, '0 structural errors\n');
 }));
 
 test('lint: duplicate spec id', () => withLintProject((project) => {
@@ -345,7 +496,43 @@ test('lint: valid delta change', () => withLintProject((project) => {
   project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## ADD\n\n### AUTH-003 — Rotate\n\n## MODIFY\n\n### AUTH-001 — Login\n\n## REMOVE\n\n- AUTH-002\n\n## PRESERVE\n\n- API stays stable.\n');
   const { code, out } = project.run('lint');
   assert.equal(code, 0);
-  assert.equal(out, '0 errors\n');
+  assert.equal(out, '0 structural errors\n');
+}));
+
+test('lint: PRESERVE-only change is rejected', () => withLintProject((project) => {
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## PRESERVE\n\n- API stays stable.\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /ERROR specs\/changes\/change\.md: change must contain at least one ADD, MODIFY, or REMOVE section/);
+}));
+
+test('lint: change without delta sections is rejected', () => withLintProject((project) => {
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /change must contain at least one ADD, MODIFY, or REMOVE section/);
+}));
+
+test('lint: empty delta section is rejected', () => withLintProject((project) => {
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## ADD\n\n## PRESERVE\n\n- API stays stable.\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /change must contain at least one ADD, MODIFY, or REMOVE section/);
+}));
+
+test('lint: comment-only delta section is rejected', () => withLintProject((project) => {
+  project.write('specs/changes/change.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## ADD\n\n<!-- TODO: describe the new behavior -->\n\n## PRESERVE\n\n- API stays stable.\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /change must contain at least one ADD, MODIFY, or REMOVE section/);
+}));
+
+test('lint: delta check does not depend on affects validity', () => withLintProject((project) => {
+  project.write('specs/changes/change.md', '---\naffects: auth.session\n---\n# Rotation\n\n## PRESERVE\n\n- API stays stable.\n');
+  const { code, out } = project.run('lint');
+  assert.equal(code, 1);
+  assert.match(out, /affects must be a list of spec ids/);
+  assert.match(out, /change must contain at least one ADD, MODIFY, or REMOVE section/);
 }));
 
 test('lint: missing affects', () => withLintProject((project) => {
@@ -369,34 +556,6 @@ test('lint: invalid affects type', () => withLintProject((project) => {
   assert.match(out, /affects must be a list of spec ids/);
 }));
 
-test('related: includes active change affecting a matched spec', () => withProject((project) => {
-  project.write('specs/changes/session-rotation.md', '---\naffects:\n  - auth.session\n---\n# Rotation\n\n## MODIFY\n\n### AUTH-001 — Login\n');
-  const { code, out, err } = project.run('related', 'src/auth/session.ts');
-  assert.equal(code, 0);
-  assert.equal(out, 'specs/capabilities/auth.md\nspecs/changes/session-rotation.md\n');
-  assert.equal(err, '');
-}));
-
-test('related: appends all relevant active changes after direct matches in stable order', () => withLintProject((project) => {
-  project.write('specs/changes/z-backend.md', '---\naffects:\n  - engineering.backend\n---\n# Backend change\n');
-  project.write('specs/changes/a-session.md', '---\naffects:\n  - auth.session\n---\n# Session change\n');
-  const { code, out } = project.run('related', 'src/auth/session.ts');
-  assert.equal(code, 0);
-  assert.equal(out,
-    'specs/capabilities/auth.md\n' +
-    'specs/engineering/backend.md\n' +
-    'specs/changes/a-session.md\n' +
-    'specs/changes/z-backend.md\n');
-}));
-
-test('related: does not include active changes for unrelated specs', () => withProject((project) => {
-  project.write('specs/capabilities/billing.md', '---\nid: billing.invoice\napplies_to:\n  - src/billing/**\n---\n# Billing\n');
-  project.write('specs/changes/billing-change.md', '---\naffects:\n  - billing.invoice\n---\n# Billing change\n');
-  const { code, out } = project.run('related', 'src/auth/session.ts');
-  assert.equal(code, 0);
-  assert.equal(out, 'specs/capabilities/auth.md\n');
-}));
-
 test('lint: conflicting active changes MODIFY and REMOVE same requirement', () => withLintProject((project) => {
   project.write('specs/changes/modify-timeout.md', '---\naffects:\n  - auth.session\n---\n# Modify\n\n## MODIFY\n\n### AUTH-002 — Logout\n');
   project.write('specs/changes/remove-timeout.md', '---\naffects:\n  - auth.session\n---\n# Remove\n\n## REMOVE\n\n- AUTH-002\n');
@@ -405,7 +564,7 @@ test('lint: conflicting active changes MODIFY and REMOVE same requirement', () =
   assert.match(out, /conflicting active changes for AUTH-002/);
   assert.match(out, /specs\/changes\/modify-timeout\.md: MODIFY/);
   assert.match(out, /specs\/changes\/remove-timeout\.md: REMOVE/);
-  assert.match(out, /1 errors\n$/);
+  assert.match(out, /1 structural errors\n$/);
 }));
 
 test('lint: conflicting active changes ADD same requirement', () => withLintProject((project) => {
@@ -423,5 +582,5 @@ test('lint: separate active changes touching different requirements are valid', 
   project.write('specs/changes/change-logout.md', '---\naffects:\n  - auth.session\n---\n# Logout\n\n## MODIFY\n\n### AUTH-002 — Logout\n');
   const { code, out } = project.run('lint');
   assert.equal(code, 0);
-  assert.equal(out, '0 errors\n');
+  assert.equal(out, '0 structural errors\n');
 }));

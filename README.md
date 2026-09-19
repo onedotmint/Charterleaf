@@ -2,20 +2,28 @@
 
 A tiny specification layer for coding agents.
 
+Given a concrete repository path, Charterleaf answers one question:
+
+> Which durable constraints should I read before touching this code?
+
 Durable project intent, deterministic routing, and structural linting —
 without workflow orchestration.
 
-> **Keep project intent in the repo, without turning specs into a workflow.**
+## Two layers
 
-Charterleaf keeps durable project knowledge in Markdown and provides exactly three deterministic helpers:
+Charterleaf sits beside a project's own navigation, not on top of it.
 
-```bash
-charterleaf map
-charterleaf related <path>
-charterleaf lint
-```
+- **A project reference protocol** — a tracked `AGENTS.md` entry plus
+  the project's own documents — tells an agent *where* authoritative
+  information lives: current state, validation, resources, history,
+  source roots.
+- **Charterleaf** tells an agent *which durable constraints* matter when
+  work lands on a specific repository path.
 
-It is a knowledge layer, not a workflow framework.
+Charterleaf complements project navigation; it does not replace
+project-owned sources of state, evidence, or workflow. It stores and
+routes durable constraints; it never becomes the owner of a fact that
+belongs to a project file.
 
 ## Install
 
@@ -35,21 +43,87 @@ No Pi extension or Pi runtime dependency is used.
 
 ## CLI
 
-Run from a repository root containing `specs/`:
+Charterleaf exposes exactly two deterministic commands. Run them from a
+repository root containing `specs/`:
 
 ```bash
-charterleaf map
-charterleaf related src/auth/session.ts
+charterleaf related <path>
 charterleaf lint
 ```
 
-`map` shows a deterministic, lightweight index of the `specs/` layer when a relevant code path is not yet known. It lists specification scopes and metadata only; it does not summarize specs or recommend what to read. Use normal code navigation to find the smallest relevant area, then use `related <path>`.
+There is no `map` command. Discovery is handled by a scoped miss (below)
+and by the project's own reference protocol.
 
-`related <path>` performs deterministic path routing. It matches `applies_to` with `*` and `**`, normalizes repo-relative paths to POSIX form, then appends active changes whose `affects` reference a matched Spec ID. Output is stable; no match is success. It is not semantic search.
+### related \<path\>
 
-`lint` performs mechanical checks only: frontmatter shape, living Spec IDs, duplicate requirement IDs, change references, static `ADD` / `MODIFY` / `REMOVE` references, and conflicting active changes that touch the same requirement ID. It does not judge wording, architecture quality, or semantic code/spec drift.
+Routes the supplied repo-relative path (`/` or `\` separators) to durable
+constraints:
 
-The frontmatter convention intentionally supports only top-level scalar values and simple string lists. Runtime dependencies remain zero.
+- `specs/constitution.md` is **Global**: returned whenever it exists,
+  regardless of frontmatter. It needs no `id` and no `applies_to`.
+- `capabilities/` and `engineering/` specs are **Scoped**: returned when
+  any `applies_to` glob matches.
+- Active changes whose `affects` reference a matched spec id are appended
+  under `Active changes`.
+
+```text
+Global
+  specs/constitution.md
+
+Scoped
+  specs/capabilities/auth.md
+```
+
+`applies_to` is a deterministic routing hint, not a completeness proof.
+"No match" only ever means "no living spec's `applies_to` glob matched
+this path" — never "no constraints apply". When nothing matches, the
+command states that explicitly and lists available living specs by `id`,
+path, and `applies_to` only, so discovery stays possible without reading
+every spec:
+
+```text
+Global
+  specs/constitution.md
+
+Scoped
+  No applies_to glob matched this path.
+
+Available living specs
+  auth.session
+    specs/capabilities/auth.md
+    applies_to: src/auth/**
+
+  engineering.backend
+    specs/engineering/backend.md
+    applies_to: src/**/*.ts
+```
+
+`related` never inspects the filesystem for the supplied path; it accepts
+the caller's repo-relative string. A scoped miss is success (exit code
+0), not an error.
+
+### lint
+
+```bash
+charterleaf lint
+```
+
+`lint` performs mechanical structural checks only: frontmatter shape,
+living Spec IDs, required `applies_to` on living specs, duplicate spec
+and requirement IDs, change references, static `ADD` / `MODIFY` /
+`REMOVE` references, changes whose `ADD` / `MODIFY` / `REMOVE` sections
+are all empty (HTML comments do not count), and conflicting active
+changes that touch the same requirement ID. Success prints
+`0 structural errors`.
+
+`lint` does **not** verify:
+
+- semantic correctness;
+- code/spec agreement;
+- routing coverage;
+- project compliance;
+- whether a change is actually complete;
+- whether an Agent read the specs.
 
 ## Project knowledge
 
@@ -62,53 +136,75 @@ specs/
 └── changes/
 ```
 
-- `constitution.md` — rare project-wide guardrails.
-- `capabilities/` — durable behavior, contracts, invariants, non-goals.
-- `engineering/` — durable implementation constraints and, when useful, concrete pitfalls.
-- `decisions/` — why an important architectural choice exists.
-- `changes/` — a lightweight active delta for an intentional durable change.
+- `constitution.md` — rare project-wide durable boundaries. Global
+  constraint; not routed by `applies_to`.
+- `capabilities/` — durable observable behavior, contracts, invariants,
+  non-goals.
+- `engineering/` — durable implementation boundaries, long-lived
+  constraints, recurring pitfalls, verification practice.
+- `decisions/` — important architectural rationale and revisit
+  conditions.
+- `changes/` — optional staging for an accepted but not-yet-implemented
+  contract. See below.
 
-Authority is structural, not scored metadata:
+## Writing specs
 
-```text
-Constitution > Active Change > Living Spec > Current Code
-```
+A spec records a constraint whose absence would plausibly cause a future
+developer or agent to make a wrong decision. It should be non-obvious,
+durable, **already true**, and mistake-preventing. Good fits: contracts,
+invariants, architecture boundaries, non-goals, recurring pitfalls,
+accepted rationale, verification constraints.
 
-Keep specs compressed and evidence-based. Prefer contracts over commentary and record durable pitfalls that code alone does not reveal. Do not invent aspirational standards merely to make a spec look complete.
+Do not write specs for current state, future design, aspirations, todos,
+implementation plans, session notes, progress, temporary debugging,
+navigation, or history. What you hope to become is a plan, not a living
+spec.
 
-For bug fixes with durable behavioral implications, clarify `Current`, `Expected`, and `PRESERVE` when that reduces accidental scope. Do not create a spec for trivial fixes with no durable implication.
+## changes/ is optional staging
 
-After non-trivial implementation or debugging, record only genuinely durable knowledge: behavior, contracts, invariants, and non-goals in capabilities; long-lived constraints, boundaries, pitfalls, or verification practices in engineering; and important architectural choices in decisions. If nothing durable was learned, do not modify specs. Specs accumulate durable project knowledge, not development activity.
+Use `specs/changes/<name>.md` only when an accepted future contract must
+temporarily coexist with current living reality — for example when
+implementation happens in another session or by another agent, human
+review comes first, or a multi-step migration is underway. A change must
+contain at least one of `ADD`, `MODIFY`, `REMOVE`; `PRESERVE` alone is
+not a change.
 
-Load the smallest relevant set; do not read the whole tree by default. After an accepted change is implemented, merge the durable result into living specs and delete the change file. Git is the history.
+Otherwise, implement, verify, and update the living spec if durable truth
+changed. After an accepted change is implemented, merge the durable
+result into living specs and delete the change file. Git keeps history.
 
-## Other agents
+## Agent conventions
 
-Charterleaf core does not depend on Pi. Any coding agent capable of reading Markdown and executing shell commands can use it.
+The complete Agent convention lives in
+[`skills/charterleaf/SKILL.md`](skills/charterleaf/SKILL.md): adoption
+gate, progressive retrieval, `related` and `lint` semantics, spec
+writing discipline, and durable learning.
 
-Use `AGENTS_SNIPPET.md` with agents that support project instructions. Agent Skills-compatible harnesses can use the bundled `skills/charterleaf/SKILL.md`.
+For agents that read project instructions, the minimal reference
+bootstrap is [`AGENTS_SNIPPET.md`](AGENTS_SNIPPET.md).
+
+Charterleaf core does not depend on Pi. Any coding agent that can read
+Markdown and run shell commands can use it.
 
 ## Boundaries
 
 Charterleaf has no:
 
-- planning
-- task management
-- agent orchestration
-- implementation or review workflow
-- session memory or context compression
-- semantic search or embeddings
-- code/spec semantic verification
-- database, index, or cache
-- daemon or background watcher
-- plugin/extension runtime
-- Git/history abstraction
+- project state, tasks, planning, or workflow;
+- memory, session lifecycle, evidence, or history management;
+- scope registry, owner registry, or project bootstrap command;
+- semantic search, embeddings, or code/spec semantic verification;
+- repository coverage analysis or filesystem awareness in `related`;
+- database, index, cache, daemon, or watcher;
+- plugin/extension runtime;
+- Git abstraction.
 
-The three CLI commands are helpers, not workflow gates.
+The two CLI commands are helpers, not workflow gates.
 
 ## Development
 
-Requires Node.js 20 or newer. There are no runtime or development dependencies and no build step.
+Requires Node.js 20 or newer. There are no runtime or development
+dependencies and no build step.
 
 ```bash
 npm test
