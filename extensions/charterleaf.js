@@ -26,7 +26,7 @@ module.exports = function charterleaf(pi) {
     if (mode === 'off') { state = undefined; return; }
     if (!state || state.root !== root) state = {
       root, mode, loaded: new Map(), staged: new Map(), pages: new Map(), pending: new Map(), denied: new Set(),
-      owned: new Map(), parents: new Map(), envelopes: new Map(), before: gitSnapshot(root), budget: 24000, reviewed: false, miss: false, opaque: false,
+      owned: new Map(), parents: new Map(), envelopes: new Map(), before: gitSnapshot(root), budget: 24000, reviewed: false, miss: false, opaque: false, knowledge: undefined,
     };
     state.mode = mode;
     return state;
@@ -148,6 +148,23 @@ module.exports = function charterleaf(pi) {
     } };
   });
 
+  // Semantic intent comes from the existing agent, never from file/read counts.
+  pi.on('message_end', (event, ctx) => {
+    if (event.message.role !== 'assistant' || ['error', 'aborted'].includes(event.message.stopReason)) return;
+    let s;
+    try { s = current(ctx); } catch { return; }
+    if (!s) return;
+    const text = event.message.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
+    const prose = text.replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, '');
+    const signal = prose.match(/<!-- charterleaf: (covered|no-value|proposed) -->\s*$/) ||
+      [...prose.matchAll(/^<!-- charterleaf: (review|covered|no-value|proposed) -->[ \t]*$/gm)].at(-1);
+    if (signal) {
+      if (signal[1] === 'proposed' && s.mode === 'confirm' && !s.proposed) return;
+      s.knowledge = signal[1];
+      if (s.knowledge !== 'review') { s.capture = gitSnapshot(s.root); s.opaque = false; }
+    }
+  });
+
   // A sibling tool call has not seen another sibling's result yet. Promote only at the next model request.
   pi.on('context', (_event, ctx) => {
     if (!state || state.root !== projectRoot(ctx.cwd)) return;
@@ -181,13 +198,14 @@ module.exports = function charterleaf(pi) {
       if (mutation && (isSpec(file) || (lexical && isSpec(lexical)))) {
         if (s.mode === 'reference') return { block: true, reason: 'Charterleaf Reference mode: report a proposal; do not modify specs.' };
         if (s.mode === 'confirm') {
+          s.proposed = true;
           if (!ctx.hasUI) return { block: true, reason: 'Charterleaf Confirm mode requires interactive approval. Report the proposal without writing.' };
           const proposal = JSON.stringify(event.input, null, 2);
           if (proposal.length > 12000) return { block: true, reason: 'Spec proposal too large to approve safely. Use smaller standard edits.' };
           if (s.denied.has(proposal)) return { block: true, reason: 'This exact spec proposal was already refused in this task. Do not retry; report it without writing.' };
           const before = fingerprint(s.root, file);
           const approved = await ctx.ui.confirm(`Charterleaf: modify ${file}?`,
-            `Approve this exact ${event.toolName} only if the durable contract change is intended. Never relax a spec just to match conflicting code.\n\n${proposal}`, { timeout: 60000 });
+            `Approve this exact ${event.toolName} only if the evidenced durable knowledge maintenance is intended. Never relax a spec just to match conflicting code.\n\n${proposal}`, { timeout: 60000 });
           if (!approved) {
             s.denied.add(proposal);
             return { block: true, reason: 'Spec modification not approved. Preserve the current spec and report the proposal; do not retry.' };
@@ -223,7 +241,12 @@ module.exports = function charterleaf(pi) {
     s.envelopes.delete(event.toolCallId);
     if (event.isError) {
       if (call?.mutation) {
-        try { if (fingerprint(s.root, call.file) !== call.before) s.opaque = true; } catch { s.opaque = true; }
+        try {
+          if (fingerprint(s.root, call.file) !== call.before) {
+            s.opaque = true;
+            if (s.knowledge !== 'review') s.knowledge = undefined;
+          }
+        } catch { s.opaque = true; s.knowledge = undefined; }
       }
       if (envelope) return { content: [...event.content, { type: 'text', text: `[Charterleaf]\n${envelope}` }] };
       return;
@@ -233,13 +256,18 @@ module.exports = function charterleaf(pi) {
       if (call) {
         const hash = fingerprint(s.root, call.file);
         if (call.mutation && hash !== call.before) {
+          if (s.knowledge !== 'review') s.knowledge = undefined;
           s.owned.set(call.file, hash);
           if (isSpec(call.file)) {
             s.loaded.delete(call.file);
             s.pages.delete(call.file);
             let output = '';
             const stream = { write: (text) => { output += text; } };
-            lint(s.root, { stdout: stream, stderr: stream });
+            if (lint(s.root, { stdout: stream, stderr: stream }) === 0) {
+              s.knowledge = 'captured';
+              s.capture = gitSnapshot(s.root);
+              s.opaque = false;
+            }
             note = `Charterleaf structural check (not semantic verification):\n${output.slice(0, 4000)}`;
           }
         } else if (!call.mutation) {
@@ -278,30 +306,43 @@ module.exports = function charterleaf(pi) {
     if (!s || s.reviewed || event.outcome !== 'completed') return;
     s.reviewed = true;
     try {
-      if (!s.owned.size && !s.opaque) return;
+      if (['captured', 'covered', 'proposed'].includes(s.knowledge)) {
+        if (!s.opaque) return;
+        const afterCapture = gitSnapshot(s.root);
+        if (s.capture && afterCapture && !changedSince(s.capture, afterCapture).some((file) => !isSpec(file))) return;
+      }
+      if (!['review', 'no-value'].includes(s.knowledge) && !s.owned.size && !s.opaque) return;
       const after = gitSnapshot(s.root);
       const comparable = s.before && after;
       const observed = changedSince(s.before, after);
       const owned = [...s.owned].filter(([file, hash]) => fingerprint(s.root, file) === hash && !isSpec(file)).map(([file]) => file);
       const unattributed = observed.filter((file) => !s.owned.has(file) || fingerprint(s.root, file) !== s.owned.get(file));
-      if (!owned.length && !unattributed.length && !(s.opaque && !comparable)) return;
+      const emptySpecs = s.knowledge === 'no-value' && resolveRelated('', s.root).available.length === 0;
+      if (s.knowledge === 'no-value' && !(emptySpecs && owned.length > 0)) return;
+      const candidate = s.knowledge === 'review';
+      if (!candidate && !owned.length && !unattributed.length && !(s.opaque && !comparable)) return;
       const relevant = new Set();
       for (const file of [...owned, ...unattributed].slice(0, 50)) {
         const result = resolveRelated(file, s.root);
         for (const spec of [...result.global, ...result.scoped, ...result.changes]) relevant.add(spec);
       }
       const content = `Charterleaf final review — once only; mode=${s.mode}.\n` +
+        (candidate ? 'The agent identified unresolved durable knowledge in this task; file changes are not required. Judge the conversation evidence, not the signal itself.\n' : '') +
+        (emptySpecs ? 'Development in an empty-spec project: verify the no-value conclusion against evidence of existing undocumented constraints, not just newly changed contracts.\n' : '') +
         `Successful standard tool edits still unchanged at settlement: ${JSON.stringify(owned.slice(0, 50))}.\n` +
         `Observed worktree changes NOT attributable to this agent: ${JSON.stringify(unattributed.slice(0, 50))}. ` +
         'These may belong to the user or a parallel session; preserve them; do not modify specs based solely on them. Existing dirty content is not yours.\n' +
         `Possibly affected specs (routing hints only): ${JSON.stringify([...relevant].slice(0, 50))}.\n` +
         (!comparable ? 'Git change inspection unavailable (baseline or final snapshot missing). Opaque tool changes cannot be identified or attributed. Review only evidence in this conversation.\n' : '') +
-        'No durable change means no spec edit; no code summary, task log or plans. ' +
-        'Record only established, non-obvious contracts, invariants, boundaries, pitfalls or accepted decisions. ' +
+        'Consider newly established AND newly discovered knowledge, including read-only investigation or accepted decisions; no code change is required. In an empty-spec project, tests or accepted behavior that reveal a non-obvious invariant without effective code-path guidance is a discovery gap; do not dismiss it merely because tests pass or the implementation already works. ' +
+        'No justified durable knowledge means no spec edit; no code summary, task log or plans. ' +
+        'Record only evidenced, non-obvious contracts, invariants, boundaries, pitfalls or accepted decisions whose absence risks future mistakes and which are not effectively documented. ' +
+        'Current code alone is not an accepted contract. Prefer a short routed reference to an authoritative document over copying it; do not duplicate knowledge already captured in this task. ' +
+        'Honor explicit no-file-write/read-only instructions even in Auto; report only. ' +
         'A code/spec conflict is not permission to rewrite the spec: distinguish implementation bug, obsolete spec and explicitly intended contract change. ' +
         'If uncertain, preserve the spec and report the conflict. ' +
         (s.mode === 'reference' ? 'Reference: report necessary proposals/conflicts only; never write specs. ' :
-          s.mode === 'confirm' ? 'Confirm: propose the exact spec edit with standard write/edit; the extension must obtain approval before execution. If already refused/no UI, report without retrying. ' :
+          s.mode === 'confirm' ? 'Confirm: invoke the exact spec write/edit to open the Extension approval dialog; the extension must obtain approval before execution. If already refused/no UI, report without retrying. ' :
             'Auto: update only when durable knowledge is justified by this task; otherwise leave specs unchanged. ') +
         'For unfamiliar authoring/staging details, read the guide. Use standard write/edit and lint. ' +
         'Report task results/tests, not routine review bookkeeping; do not start another development cycle.';

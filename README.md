@@ -36,10 +36,10 @@ Install once in Pi to discover the bundled Extension and Skill:
 pi install npm:@onedotmint/charterleaf
 ```
 
-**v0.4 is not yet published.** Until publication, install the local package
-with `pi install /absolute/path/to/charterleaf` (a package directory, not a
-`.tgz` file). For the standalone CLI, pack with `npm pack`, then use `npm install -g ./onedotmint-charterleaf-0.4.0.tgz`; after publication,
-use `npm install -g @onedotmint/charterleaf`.
+For the standalone CLI, use `npm install -g @onedotmint/charterleaf`.
+For local development, use `pi install /absolute/path/to/charterleaf` (a package
+directory, not a `.tgz` file). To test the CLI from a local package, run `npm pack`
+then `npm install -g ./onedotmint-charterleaf-0.4.1.tgz`.
 
 Restart Pi or run `/reload` after installation, then use `/charterleaf` in each
 project you want to enable. To stop automation, choose **Not Enable** in that
@@ -128,18 +128,55 @@ requires fresh delivery; successful standard spec writes invalidate loaded state
 Compaction invalidates loaded context so constraints must be delivered
 again. This is task-local bookkeeping, not a watcher or persistent index.
 
+Knowledge capture happens **during normal work**, not just after code changes:
+development, debugging, substantive code/test/architecture investigation and
+accepted technical decisions can establish or uncover durable knowledge. A project
+with only `specs/.charterleaf.json` is a valid initial state. When evidence warrants
+it, the Agent creates a concise scoped spec using ordinary authorized `write`/`edit`;
+Core immediately routes its `id`/`applies_to` on later related code reads or edits.
+There is no initialization scan, document quota or adoption wizard.
+
 At successful, actionable `agent_before_settle`, the Extension may request
-**at most one final semantic review per task** after development. It
-separates successful standard-tool paths whose observed content is still
+**at most one final semantic review per task**. Actual development remains a
+fallback, but an unresolved evidenced knowledge candidate can also trigger it
+without file changes or Git. The existing Agent makes the semantic judgment; the
+Extension observes standalone assistant lifecycle comments outside fenced examples
+(`charterleaf: review` or an explicit `covered`/`no-value`/`proposed` knowledge
+conclusion; an exact terminal conclusion also works inline), never interprets read
+counts as knowledge. A generic `done` cannot suppress the development fallback.
+In an empty-spec project, a development fallback
+remains eligible when the Agent says `no-value`; this gives the existing single
+review a chance to catch a missed discovery gap. These are
+cooperative intent signals, not evidence or permissions. Already judged/captured,
+proposed or effectively documented knowledge needs no repeat review when a
+completion signal is observed. If the Agent
+omits its completion signal, the bounded fallback can repeat an already answered
+knowledge judgment; zero redundant reviews is not guaranteed. Successful
+structurally valid standard spec writes mark capture complete; later actual code
+edits or distinct candidates may rearm. Opaque activity after capture still uses
+bounded Git comparison when available. Ordinary views, queries and chat do not
+by themselves request another model call.
+
+For the development fallback, the Extension separates successful standard-tool
+paths whose observed content is still
 unchanged from **unattributed** changes observed against the task's Git
 baseline. Neither a touched file nor a dirty worktree proves ownership
 of every line. Preserve existing user dirt and parallel work; unattributed
 changes alone must not justify spec edits. No automatic revert, stage,
 commit or push is performed.
 
-**No durable knowledge means no spec edit.** Keep only established,
-non-obvious, mistake-preventing contracts, invariants, boundaries,
-pitfalls or accepted decisions — not code summaries or task logs. A
+**No justified durable knowledge means no spec edit.** Distinguish **newly
+established** contracts/decisions from **newly discovered** existing constraints;
+both can qualify even in a code-read-only investigation. Require reliable evidence
+(accepted decisions, authoritative docs, tests or sufficiently verified behavior),
+future mistake-prevention value, and a documentation/discoverability gap. If an
+existing authoritative document covers it, prefer a short routed reference when
+needed; otherwise do nothing. Keep non-obvious contracts, invariants, boundaries,
+pitfalls or accepted decisions — not code summaries, progress, debugging logs,
+temporary plans/todos or speculation. Current code alone is not an accepted
+correct contract. Explicit **no-file-write/read-only** instructions override Auto:
+report a finding/proposal without writing. Confirm/Reference retain their existing
+permissions. A
 code/spec conflict is not permission to accommodate incorrect code:
 distinguish implementation bugs, authoritatively obsolete specs and
 explicitly intended contract changes. When uncertain, preserve the spec
@@ -256,7 +293,8 @@ specs/
 
 A spec records a constraint whose absence would plausibly cause a future
 developer or agent to make a wrong decision. It should be non-obvious,
-durable, **already true**, and mistake-preventing. Good fits: contracts,
+durable, **already true or explicitly accepted**, evidenced, mistake-preventing,
+and not already effectively documented. Good fits: contracts,
 invariants, architecture boundaries, non-goals, recurring pitfalls,
 accepted rationale, verification constraints.
 
@@ -274,8 +312,8 @@ review comes first, or a multi-step migration is underway. A change must
 contain at least one of `ADD`, `MODIFY`, `REMOVE`; `PRESERVE` alone is
 not a change.
 
-Otherwise, implement, verify, and update the living spec if durable truth
-changed. After an accepted change is implemented, merge the durable
+Otherwise, implement/verify as needed and maintain the living spec when durable
+truth changed **or an existing valuable constraint lacks effective documentation**. After an accepted change is implemented, merge the durable
 result into living specs and delete the change file. Git keeps history.
 
 ## Agent conventions
@@ -348,34 +386,59 @@ Verification commands:
 
 ```bash
 npm test
-npm run test:pi   # requires compatible Pi on PATH; isolated RPC UI smoke, no model calls
+npm run test:pi   # isolated real RPC/UI smoke; no model calls
+CHARTERLEAF_MODEL=deepseek/deepseek-flash npm run test:organic  # paid isolated A–G acceptance
+CHARTERLEAF_MODEL=deepseek/deepseek-flash CHARTERLEAF_BASELINE=5d470db npm run test:context  # paid comparison against v0.4.0
+node scripts/organic-smoke.js --self-test  # harness/oracle check, no model calls
 node --test tests/extension.test.js
 npm pack --dry-run
 node bin/charterleaf.js related extensions/charterleaf.js
 node bin/charterleaf.js lint
 ```
 
-Validated on Node.js 24.21.0 and Pi 1.1.0: 149 automated Core/Extension tests,
+Validated on Node.js 24.21.0 and Pi 1.1.0: 183 automated Core/Extension tests,
 structural lint, dry-run npm packaging, and real Pi RPC loading/native selection
 for cancellation, mode changes, disable and cross-process restore. The RPC smoke
 uses isolated temporary projects/settings and makes no model calls.
 
-Independent acceptance also exercised real `openai/gpt-5.6-terra` sessions in
-isolated Git projects: ordinary refactors, intentional API updates, durable
-rounding knowledge, conflicts, all three modes, no-UI Confirm, parallel nested
-tools, oversized specs, dirty/concurrently modified files, Bash writes and
-invalid metadata. Evidence was checked against tool results and file diffs,
-not assistant claims. These bounded examples do not prove model reliability
-on every task or provider. The original activation message measured 8,450 UTF-8
-bytes (8.25 KiB), mostly the full Skill; it was not all native Pi context or a
-Token count. After the dedicated context audit, compact rules plus activation
-measure about 2 KiB: in a controlled first-request comparison the Charterleaf
-increment fell from 1,720 to 403 provider input tokens, with identical native
-prompt/tools. Smaller total context does not guarantee the same reduction in
-uncached input charges: cache-hit sizes vary. Substantive work still requests
-at most one extra model review. A model
-initially misreported a blocked edit as completed; clearer error text corrected
-the observed regression, but final claims still need independent verification.
+The 0.4.1 organic-capture acceptance used real `deepseek/deepseek-flash` sessions
+in isolated Git projects. Actual tool results, approval records, specs, routing,
+file snapshots/diffs, original tests and an independent exact-money oracle were
+checked, not just assistant claims. Empty-spec development and investigation,
+ordinary-query non-triggers, authoritative-document references, bug-versus-contract
+handling, cross-session reuse and mode/read-only/no-UI permissions all have passing
+evidence. **The strict matrix was not consistently all-green:** the latest focused
+A→F1→F2 run passed A and F1, while F2 omitted its knowledge-completion comment and
+received one redundant fallback review. Its actual routing, code behavior and
+unchanged-spec checks passed. These bounded examples do not prove model reliability
+on every task or provider, or guarantee zero redundant reviews.
+
+The controlled organic-capture comparison (`scripts/context-smoke.js`) keeps cwd,
+package paths, prompt and native tools identical. On `deepseek/deepseek-flash`:
+disabled 1,616 input tokens; v0.4.0 baseline 2,036 (increment 420); organic runtime
+2,142 (increment 526), or **106 additional fixed input tokens**. Input here includes
+cached input. Each chat made exactly one request and no tool calls; the full Skill
+remains on demand. Absolute path tokenization and provider tokenizers vary, and
+cache-hit sizes affect uncached charges, so these are measured examples, not fixed
+billing guarantees. The script defaults to `HEAD`; set `CHARTERLEAF_BASELINE` to the
+older revision being compared (the command above uses the v0.4.0 release commit).
+Substantive work requests **zero or at most one** extra model review: observed
+capture/coverage/proposal completion skips the fallback; empty-spec development can
+still get the one fallback after a `no-value` judgment.
+
+The real-model acceptance script retains raw RPC/JSONL, conversations, actual tool
+records, before/after files, tracked/untracked diffs, validation output and individual
+assertions in the printed private temporary directory, including failures. It copies
+credentials only to isolated settings and removes that copy on normal/error
+completion; a forced process kill may require deleting the private credential
+copy manually. It does not
+import personal extensions/instructions or modify other repositories, and it is not
+an OS security sandbox. Both paid scripts require explicit `CHARTERLEAF_MODEL=provider/id`; neither chooses
+another provider automatically. The requested model must be available;
+`--case A,B,...` selects bounded scenarios. F cases run A first, then B only if A failed to capture; they reuse only
+model-written knowledge in the same project across fresh sessions. A's failure
+remains a failed assertion; a successful B→F chain does not conceal it. Model usage counts visible assistant responses, not hidden
+provider HTTP retries. Cost fixtures also remove copied credentials on exit.
 
 For an interactive smoke check in a disposable project, install the local
 package in a compatible Pi host and run `/charterleaf`: check immediate

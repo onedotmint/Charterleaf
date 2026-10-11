@@ -108,6 +108,11 @@ function api(p, { hasUI = true } = {}) {
       return this.result(call);
     },
     async prime() { await this.read(); await this.emit('context'); },
+    assistant(content, overrides = {}) {
+      return this.emit('message_end', { message: {
+        role: 'assistant', content: [{ type: 'text', text: content }], stopReason: 'stop', ...overrides,
+      } });
+    },
     settle(overrides = {}) {
       return this.emit('agent_before_settle', {
         outcome: 'completed', context: { canContinue: true }, entries: [], ...overrides,
@@ -476,7 +481,10 @@ for (const mode of ['auto', 'confirm', 'reference']) {
     const content = review(result);
     assert.deepEqual(pathsInReview(content, OWNED), [SOURCE]);
     assert.match(content, /once only/);
-    assert.match(content, /No durable change means no spec edit/);
+    assert.match(content, /No justified durable knowledge means no spec edit/);
+    assert.match(content, /newly established AND newly discovered/);
+    assert.match(content, /no code change is required/);
+    assert.match(content, /Honor explicit no-file-write\/read-only instructions/);
     assert.match(content, /non-obvious contracts, invariants, boundaries, pitfalls or accepted decisions/);
     assert.match(content, /not permission to rewrite the spec/);
     assert.match(content, /implementation bug, obsolete spec and explicitly intended contract change/);
@@ -1261,4 +1269,319 @@ test('Confirm never repeats an approval dialog for the same refused proposal wit
   await h.emit('before_agent_start');
   assert.equal((await h.write(SPEC, 'same proposed update')).block, true);
   assert.equal(h.approvals.length, 2, 'a new user task can make a fresh proposal');
+});
+
+
+for (const git of [false, true]) {
+  test(`organic discovery: pending semantic candidate can review without code/specs (Git=${git})`, async (t) => {
+    const p = project(t, { git, specs: false });
+    const h = api(p);
+    await h.emit('before_agent_start');
+    await h.read();
+    await h.assistant('Verified an undocumented invariant against accepted policy and tests.\n<!-- charterleaf: review -->');
+    const content = review(await h.settle());
+    assert.match(content, /unresolved durable knowledge/);
+    assert.match(content, /Judge the conversation evidence, not the signal/);
+    assert.deepEqual(pathsInReview(content, OWNED), []);
+    assert.deepEqual(pathsInReview(content, UNATTRIBUTED), []);
+    assert.equal(await h.settle(), undefined);
+    assert.deepEqual(fs.readdirSync(p.file('specs')), ['.charterleaf.json']);
+  });
+}
+
+test('ordinary file viewing/search/chat and quoted signals never imply discovered knowledge', async (t) => {
+  const p = project(t, { specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  for (let i = 0; i < 8; i++) await h.read();
+  await h.result(h.call('grep', { pattern: 'module' }));
+  await h.emit('message_end', { message: { role: 'user', content: [{ type: 'text', text: '<!-- charterleaf: review -->' }] } });
+  await h.emit('message_end', { message: { role: 'toolResult', content: [{ type: 'text', text: '<!-- charterleaf: review -->' }] } });
+  await h.assistant('The example is:\n```html\n<!-- charterleaf: review -->\n```');
+  await h.assistant('Inline <!-- charterleaf: review -->');
+  await h.assistant('<!-- charterleaf: review -->', { stopReason: 'error' });
+  await h.assistant('<!-- charterleaf: review -->', { stopReason: 'aborted' });
+  assert.equal(await h.settle(), undefined);
+});
+
+test('knowledge judged without writing suppresses a redundant development review', async (t) => {
+  const p = project(t, { git: true });
+  const h = api(p);
+  await h.prime();
+  await h.write(SOURCE, 'changed');
+  await h.assistant('Existing authority already documents it; no routing gap.\n<!-- charterleaf: covered -->');
+  assert.equal(await h.settle(), undefined);
+  assert.equal(p.read(SPEC), CONTRACT);
+});
+
+test('successful organic capture suppresses same-task review and routes in a fresh session', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.write(SOURCE, 'changed implementation');
+  await h.assistant('Concrete discovery needs judgment.\n<!-- charterleaf: review -->');
+  assert.match(text(await h.write(SPEC, CONTRACT)), /0 structural errors/);
+  await h.result(h.call('bash', { command: 'run tests' }));
+  await h.read();
+  assert.equal(await h.settle(), undefined, 'already captured, including later reads/tests with no diff');
+  const next = api(p);
+  await next.emit('before_agent_start');
+  const block = await next.emit('tool_call', next.call('edit', { path: SOURCE }));
+  assert.equal(block.block, true);
+  assert.match(block.reason, /SERVICE-001/);
+  await next.emit('context');
+  assert.equal(await next.emit('tool_call', next.call('edit', { path: SOURCE })), undefined);
+});
+
+test('invalid or failed spec writes cannot satisfy pending knowledge review', async (t) => {
+  const p = project(t, { specs: false });
+  const h = api(p);
+  await h.assistant('An evidenced candidate.\n<!-- charterleaf: review -->');
+  const call = h.call('write', { path: SPEC, content: CONTRACT });
+  await h.emit('tool_call', call);
+  await h.result(call, { isError: true });
+  assert.match(text(await h.write(SPEC, '# Missing routing metadata\n')), /structural errors/);
+  review(await h.settle());
+});
+
+for (const activity of ['code', 'opaque', 'candidate']) {
+  test(`distinct ${activity} after capture can rearm, but never loop`, async (t) => {
+    const p = project(t, { git: true, specs: false });
+    const h = api(p);
+    await h.write(SPEC, CONTRACT);
+    if (activity === 'code') {
+      await h.prime();
+      await h.write(SOURCE, 'later change');
+    } else if (activity === 'opaque') {
+      p.write('src/later.js', 'opaque write');
+      await h.result(h.call('bash', { command: 'external_writer' }));
+    } else await h.assistant('Distinct evidenced discovery.\n<!-- charterleaf: review -->');
+    review(await h.settle());
+    await h.assistant('Another candidate.\n<!-- charterleaf: review -->');
+    assert.equal(await h.settle(), undefined);
+  });
+}
+
+test('semantic candidate state is task-local; last explicit judgment wins', async (t) => {
+  const p = project(t, { specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.assistant('<!-- charterleaf: review -->');
+  await h.assistant('<!-- charterleaf: covered -->');
+  assert.equal(await h.settle(), undefined);
+  await h.emit('before_agent_start');
+  await h.assistant('<!-- charterleaf: review -->');
+  await h.emit('before_agent_start');
+  assert.equal(await h.settle(), undefined);
+  await h.emit('before_agent_start');
+  await h.assistant('<!-- charterleaf: covered -->');
+  await h.assistant('<!-- charterleaf: review -->');
+  review(await h.settle());
+});
+
+for (const mode of ['auto', 'confirm', 'reference']) {
+  test(`empty specs ${mode}: organic capture preserves exact existing permissions`, async (t) => {
+    const p = project(t, { mode, specs: false });
+    const h = api(p);
+    await h.emit('before_agent_start');
+    await h.assistant('<!-- charterleaf: review -->');
+    const result = await h.write(SPEC, CONTRACT);
+    if (mode === 'auto') {
+      assert.match(text(result), /0 structural errors/);
+      assert.equal(await h.settle(), undefined);
+    } else {
+      assert.equal(result.block, true);
+      assert.equal(fs.existsSync(p.file(SPEC)), false);
+      await h.assistant('Proposal reported; no retry.\n<!-- charterleaf: proposed -->');
+      assert.equal(await h.settle(), undefined);
+    }
+    assert.equal(h.approvals.length, mode === 'confirm' ? 1 : 0);
+    if (mode === 'confirm') {
+      await h.emit('before_agent_start');
+      h.confirm = () => true;
+      assert.match(text(await h.write(SPEC, CONTRACT)), /0 structural errors/);
+      assert.equal(h.approvals.length, 2);
+    }
+  });
+}
+
+test('new runtime retains evidence, duplication, authority and explicit read-only discipline', async (t) => {
+  const h = api(project(t, { specs: false }));
+  const rules = (await h.emit('before_agent_start')).message.content;
+  for (const pattern of [/newly established OR newly discovered/, /even without code changes\/prior specs/,
+    /reliable evidence/, /mistake-prevention/, /documentation\/discoverability gap/, /Code alone is not an accepted contract/,
+    /prefer short routed references/, /read-only\/no-file-write requests override Auto/, /never relax specs to match code/,
+    /not by read counts/, /at most one extra review/i, /All modes allow normal code edits/,
+    /Reference proposes, never writes specs/, /NOT merely finishing code\/tests/, /tests aren't automatic code-path routing/, /Reasons outside, never inside comments/,
+    /Confirm calls spec write\/edit to open Extension approval/]) assert.match(rules, pattern);
+});
+
+
+test('an accepted engineering decision can request judgment without reads, edits or Git', async (t) => {
+  const p = project(t, { specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.assistant('The user accepted a durable boundary; documentation is still unresolved.\n<!-- charterleaf: review -->');
+  const content = review(await h.settle());
+  assert.match(content, /accepted decisions/);
+  assert.deepEqual(pathsInReview(content, OWNED), []);
+  assert.equal(await h.settle(), undefined);
+});
+
+test('no-UI Confirm cannot bootstrap a spec from a semantic discovery signal', async (t) => {
+  const p = project(t, { mode: 'confirm', specs: false });
+  const h = api(p, { hasUI: false });
+  await h.assistant('<!-- charterleaf: review -->');
+  const block = await h.write(SPEC, CONTRACT);
+  assert.equal(block.block, true);
+  assert.match(block.reason, /requires interactive approval/);
+  assert.equal(fs.existsSync(p.file(SPEC)), false);
+  assert.deepEqual(h.approvals, []);
+  await h.assistant('Proposal reported without writing.\n<!-- charterleaf: proposed -->');
+  assert.equal(await h.settle(), undefined);
+});
+
+
+test('generic task done cannot suppress the development knowledge fallback', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.write(SOURCE, 'real development');
+  await h.assistant('Implementation and tests finished.\n<!-- charterleaf: done -->');
+  review(await h.settle());
+  assert.equal(await h.settle(), undefined);
+});
+
+for (const conclusion of ['covered', 'no-value', 'proposed']) {
+  test(`explicit ${conclusion} knowledge judgment avoids duplicate review, without granting write authority`, async (t) => {
+    const p = project(t, { mode: 'reference', git: true, specs: false });
+    const h = api(p);
+    await h.assistant(`Knowledge assessment complete.\n<!-- charterleaf: ${conclusion} -->`);
+    assert.equal((await h.write(SPEC, CONTRACT)).block, true);
+    assert.equal(fs.existsSync(p.file(SPEC)), false);
+    assert.equal(await h.settle(), undefined);
+  });
+}
+
+
+test('Confirm prose alone is not a gate-handled proposal completion signal', async (t) => {
+  const p = project(t, { mode: 'confirm', git: true, specs: false });
+  const h = api(p);
+  await h.write(SOURCE, 'normal implementation change');
+  await h.assistant('Please approve later.\n<!-- charterleaf: proposed -->');
+  review(await h.settle());
+  assert.deepEqual(h.approvals, []);
+  assert.equal(fs.existsSync(p.file(SPEC)), false);
+});
+
+
+test('empty-spec development gets one fallback even after a no-value conclusion', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.write(SOURCE, 'owned code change');
+  await h.assistant('<!-- charterleaf: no-value -->');
+  const content = review(await h.settle());
+  assert.match(content, /verify the no-value conclusion/);
+  assert.doesNotMatch(content, /agent identified unresolved durable knowledge/);
+  assert.deepEqual(pathsInReview(content, OWNED), [SOURCE]);
+  assert.equal(await h.settle(), undefined);
+});
+
+for (const specs of [true, false]) {
+  test(`no-value read-only judgment cannot review parallel work (existing specs=${specs})`, async (t) => {
+    const p = project(t, { git: true, specs });
+    const h = api(p);
+    await h.emit('before_agent_start');
+    await h.read();
+    p.write(SOURCE, 'parallel work');
+    await h.assistant('<!-- charterleaf: no-value -->');
+    assert.equal(await h.settle(), undefined);
+  });
+}
+
+test('effective existing specs allow a no-value development judgment without redundant review', async (t) => {
+  const p = project(t, { git: true });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.prime();
+  await h.write(SOURCE, 'owned code change');
+  await h.assistant('<!-- charterleaf: no-value -->');
+  assert.equal(await h.settle(), undefined);
+});
+
+
+for (const conclusion of ['covered', 'no-value', 'proposed']) {
+  test(`later real code edits rearm a prior ${conclusion} judgment`, async (t) => {
+    const p = project(t, { git: true, specs: false });
+    const h = api(p);
+    await h.emit('before_agent_start');
+    await h.assistant(`<!-- charterleaf: ${conclusion} -->`);
+    await h.write(SOURCE, 'later owned implementation change');
+    review(await h.settle());
+    assert.equal(await h.settle(), undefined);
+  });
+}
+
+test('a structurally invalid later spec change invalidates prior successful capture', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.write(SOURCE, 'owned change');
+  await h.write(SPEC, CONTRACT);
+  assert.match(text(await h.write(SPEC, '---\napplies_to: invalid\n---\n# Invalid later spec\n')), /structural errors/);
+  const result = await h.settle();
+  assert.equal(result.continue, undefined, 'bad metadata must report a limit, not pretend capture is complete');
+  assert.match(result.entries.at(-1).content, /No automatic review was performed/);
+});
+
+test('opaque code changes after covered knowledge can rearm the bounded fallback', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.emit('before_agent_start');
+  await h.assistant('<!-- charterleaf: covered -->');
+  p.write(SOURCE, 'later opaque change');
+  await h.result(h.call('bash', { command: 'opaque_writer' }));
+  review(await h.settle());
+});
+
+
+test('standalone semantic signal survives a following rationale without repeating review', async (t) => {
+  const p = project(t, { git: true });
+  const h = api(p);
+  await h.prime();
+  await h.write(SOURCE, 'fixed bug');
+  await h.assistant('Fixed and verified.\n<!-- charterleaf: covered -->\nThe existing authority already captures this boundary.');
+  assert.equal(await h.settle(), undefined);
+});
+
+test('fenced examples of semantic signals never suppress real development review', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.write(SOURCE, 'new implementation');
+  await h.assistant('An example:\n```html\n<!-- charterleaf: covered -->\n```\nAnother:\n~~~html\n<!-- charterleaf: no-value -->\n~~~');
+  review(await h.settle());
+});
+
+
+test('a failed partial spec mutation cannot retain prior successful capture credit', async (t) => {
+  const p = project(t, { git: true, specs: false });
+  const h = api(p);
+  await h.write(SOURCE, 'owned implementation');
+  await h.write(SPEC, CONTRACT);
+  const call = h.call('write', { path: SPEC, content: '---\napplies_to: invalid\n---\n' });
+  await h.emit('tool_call', call);
+  p.write(SPEC, call.input.content);
+  await h.result(call, { isError: true });
+  const result = await h.settle();
+  assert.equal(result.continue, undefined);
+  assert.match(result.entries.at(-1).content, /No automatic review was performed/);
+});
+
+
+test('an exact inline terminal conclusion supersedes an earlier candidate without extra review', async (t) => {
+  const p = project(t, { git: true });
+  const h = api(p);
+  await h.write(SOURCE, 'new test under existing contract');
+  await h.assistant('<!-- charterleaf: review -->\nCandidate examined. Existing routed authority already covers it. <!-- charterleaf: covered -->');
+  assert.equal(await h.settle(), undefined);
 });

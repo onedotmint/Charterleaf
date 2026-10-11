@@ -28,7 +28,12 @@ With automation enabled, use supplied constraints or explicitly read the
 named specs before retrying a gated write/edit. Use standard `write`/`edit`
 for spec changes: Confirm requires each approval; Reference allows no
 spec changes. Do not bypass these cooperative checks with Bash or another
-writer. No durable change means no spec edit; never relax a spec merely
+writer. During normal development or investigation, capture newly established
+or newly discovered knowledge only with reliable evidence, long-term value and a
+documentation/discoverability gap; no code change or prior spec is required.
+Prefer short scoped references to authoritative owners over copying documents.
+Explicit no-file-write/read-only instructions override Auto. No justified durable
+knowledge means no spec edit; never relax a spec merely
 to accommodate conflicting code. Preserve user/parallel work and keep
 state, plans, evidence and history in their existing authoritative owners,
 not in a new Charterleaf workflow.
