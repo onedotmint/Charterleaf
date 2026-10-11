@@ -1,149 +1,37 @@
 ---
 name: charterleaf
-description: A tiny specification layer for durable project intent and constraints.
+description: Discover and maintain durable project constraints when Charterleaf is explicitly enabled or requested.
+disable-model-invocation: true
 ---
 
-# Charterleaf
+# Charterleaf authoring guide
 
-## Adoption gate
+The essential rules live in [runtime.md](runtime.md); read it only if not already supplied. The Pi Extension supplies those rules automatically only when the project is enabled via `/charterleaf`; it does not preload this guide. Outside Pi, use the CLI only when explicitly requested. Existing `specs/` alone does not enable automation; do not initialize documents or recommend adoption automatically.
 
-Before using Charterleaf in a repository, check whether `specs/` exists.
+Read this guide only for unfamiliar spec formats, staged changes or manual CLI use. Ordinary code edits need no Skill read or CLI call when applicable constraints have already been supplied.
 
-If no `specs/` directory exists:
+## Ownership and durable writing
 
-- do not run Charterleaf;
-- do not create `specs/`;
-- do not recommend adoption automatically;
-- continue using the repository's normal instructions.
+Source owns implementation; tests own executable verification; `AGENTS.md` owns project entry/navigation; specs own durable constraints. Never copy signatures, inventories, current state or existing documentation into specs. Link the authoritative owner instead. Charterleaf is not task management, planning, memory, evidence, history or a project workflow.
 
-Charterleaf is opt-in.
+Place only established, non-obvious knowledge whose absence could cause a future mistake:
 
-## Boundary
+- `specs/constitution.md`: rare project-wide boundaries;
+- `specs/capabilities/`: observable contracts, invariants and non-goals;
+- `specs/engineering/`: long-lived implementation boundaries, recurring pitfalls and verification constraints;
+- `specs/decisions/`: accepted rationale and revisit conditions.
 
-Charterleaf answers one question:
+Living capability/engineering specs need a unique `id` and non-empty `applies_to` list. Keep scope narrow, preserve existing formats and requirement IDs, and verify explicit local references normally. `anchors` and `verified_by` are not required. Do not create speculative standards or code summaries to satisfy a final review.
 
-> For this repository path, which durable constraints should I read?
+## Optional staged changes
 
-A project's own reference protocol — its `AGENTS.md` entry and the
-project-owned documents it points to — answers a different question:
+Use `specs/changes/<name>.md` only when an accepted future contract must coexist with current truth: review, another session or an ongoing migration. Supply valid `affects` spec IDs and at least one non-empty `ADD`, `MODIFY` or `REMOVE` section; `PRESERVE` alone is not a change. Once implemented and verified, merge durable truth into living specs and remove obsolete staging. Git keeps history; never commit automatically.
 
-> Where do this project's authoritative facts live?
+## CLI details
 
-Charterleaf owns only: spec taxonomy, durable constraint routing
-(`related`), and structural lint (`lint`).
+Run from the project root:
 
-Charterleaf does not own: current project state, tasks, workflow,
-planning, memory, evidence, history, session lifecycle, project-wide
-consistency, semantic code/spec verification, or repository state
-synchronization.
+- `charterleaf related <path>` returns constitution as Global, capability/engineering specs matching `applies_to`, and active changes affecting returned spec IDs. It returns paths/metadata, not bodies. Decisions and explicit references are followed manually when relevant. A scoped miss is not proof that no constraints apply.
+- `charterleaf lint` checks frontmatter, IDs/globs, duplicate IDs, change references/deltas and conflicting active changes. `0 structural errors` does not prove semantic correctness, coverage or code/spec agreement. The Extension also lints standard spec writes.
 
-## Progressive retrieval
-
-1. **Identify the need.** Orientation, current state, evidence,
-   validation, resources, implementation detail, or durable constraint?
-2. **Locate the owner.** If the owner is known, read it directly. If not,
-   read the project `AGENTS.md` / project instructions. Do not scan the
-   whole repository's Markdown first.
-3. **Enough?** If the authoritative information you have is sufficient,
-   stop reading. Do not keep reading for completeness.
-4. **Expand progressively.** Only when information is insufficient, the
-   owner is unclear, sources conflict, the work area is unknown, or
-   verification is needed — and only one layer at a time.
-5. **Concrete path.** Once work lands on a concrete repository path, run
-   `charterleaf related <path>` and read the returned constraints.
-6. **Work.** Normal implementation, learning, design, or debugging. The
-   reference protocol does not manage workflow.
-7. **Write back.** Changed current fact → its single owner. New evidence
-   → the evidence owner. New or changed durable constraint → `specs/`.
-   Historical event → project history or Git. Future plan → planning
-   docs. Never copy one fact into several files: one owner per fact,
-   other documents point to it.
-
-## related semantics
-
-`charterleaf related <path>`:
-
-- always returns `specs/constitution.md` as Global when it exists;
-- routes `capabilities/` and `engineering/` specs whose `applies_to`
-  glob matches the path;
-- appends active changes whose `affects` reference a returned spec id.
-
-`applies_to` is a **routing hint**, not a completeness proof. The message
-`No applies_to glob matched this path.` means exactly that — it never
-means "no constraints apply". On a scoped miss the command lists
-available living specs by `id`, path, and `applies_to` only. Use that
-list to find the right area, then rerun with the concrete path. The
-command never prints spec bodies, ranks relevance, or guesses.
-
-## lint semantics
-
-`charterleaf lint` reports mechanical structural problems only:
-frontmatter shape, living-spec ids and `applies_to`, duplicate spec and
-requirement ids, change references, changes whose `ADD` / `MODIFY` /
-`REMOVE` sections are all empty (HTML comments do not count), and
-conflicting active changes.
-
-It does **not** verify semantic correctness, code/spec agreement,
-routing coverage, project compliance, whether a change is complete, or
-whether an Agent read the specs. Success prints `0 structural errors`.
-Run it after editing specs.
-
-## Spec writing discipline
-
-A spec records a constraint whose absence would plausibly cause a future
-developer or agent to make a wrong decision. It should be non-obvious,
-durable, **already true**, and mistake-preventing.
-
-Good fits: contracts, invariants, architecture boundaries, non-goals,
-recurring pitfalls, accepted architectural rationale, verification
-constraints.
-
-Not specs: current state, future design, aspirations, todos,
-implementation plans, session notes, progress, temporary debugging,
-navigation, history. "Already true" matters — what you hope to become is
-a plan, not a living spec.
-
-Place a constraint where it belongs:
-
-- rare project-wide durable boundary → `specs/constitution.md`;
-- observable behavior, contract, invariant, or non-goal →
-  `specs/capabilities/`;
-- implementation boundary, long-lived constraint, recurring pitfall, or
-  verification practice → `specs/engineering/`;
-- important architectural rationale and revisit condition →
-  `specs/decisions/`.
-
-Keep specs compressed. Prefer durable contracts and pitfalls over
-commentary, and never invent aspirational standards.
-
-## changes/ is optional staging
-
-Use `specs/changes/<name>.md` only when an accepted future contract must
-temporarily coexist with current living reality — for example when
-implementation happens in another session or by another agent, human
-review comes first, or a multi-step migration is underway. A change must
-contain at least one of `ADD`, `MODIFY`, `REMOVE`; `PRESERVE` alone is
-not a change.
-
-Otherwise: implement, verify, and update the living spec if durable truth
-changed. After an accepted change is implemented, merge the durable
-result into living specs and delete the change file. Git keeps history.
-
-## Durable learning
-
-After non-trivial implementation or debugging, ask once: did this work
-reveal durable knowledge whose absence could cause a future mistake?
-
-If not, change nothing. If yes, record only the durable constraint in
-the matching category above.
-
-Never record current progress, temporary debug notes, one-off commands,
-session history, todos, or transient observations. Specs accumulate
-durable constraints, not development activity.
-
-## Non-goals
-
-Do not use Charterleaf to manage tasks, planning, workflow, memory,
-evidence, history, repository state, or scope registries. Do not ask it
-to verify semantics, coverage, or project compliance. It finds
-constraints; it does not manage the project.
+If the CLI is not on PATH, use `node <skill-directory>/../../bin/charterleaf.js related <path>` or `lint`; the Extension supplies the absolute entry point. Report failed writing or validation accurately, and never relax a contract merely to remove an error.

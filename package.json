@@ -1,7 +1,7 @@
 {
   "name": "@onedotmint/charterleaf",
-  "version": "0.3.0",
-  "description": "A tiny specification layer for coding agents.",
+  "version": "0.4.0",
+  "description": "Lightweight Agent-Native Constraint Layer: opt-in spec discovery and maintenance for Pi, with a standalone zero-dependency CLI.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -20,6 +20,7 @@
   "files": [
     "bin/",
     "lib/",
+    "extensions/",
     "skills/",
     "templates/",
     "AGENTS_SNIPPET.md",
@@ -32,12 +33,17 @@
     "coding-agent",
     "specification",
     "agent-skills",
-    "pi"
+    "pi",
+    "pi-package"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:pi": "node scripts/pi-smoke.js"
   },
   "pi": {
+    "extensions": [
+      "./extensions/charterleaf.js"
+    ],
     "skills": [
       "./skills"
     ]

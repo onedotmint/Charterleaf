@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { main } = require('../lib/charterleaf.js');
+const { main, resolveRelated } = require('../lib/charterleaf.js');
 
 const CAPABILITY = `---
 id: auth.session
@@ -583,4 +583,43 @@ test('lint: separate active changes touching different requirements are valid', 
   const { code, out } = project.run('lint');
   assert.equal(code, 0);
   assert.equal(out, '0 structural errors\n');
+}));
+
+
+test('Core: structured routing shares CLI semantics without requiring Pi or adoption config', () => withLintProject((project) => {
+  project.write('specs/changes/session.md', '---\naffects: [auth.session]\n---\n## MODIFY\nAUTH-001\n');
+  const result = resolveRelated('src/auth/login.ts', project.root);
+  assert.deepEqual(result.global, ['specs/constitution.md']);
+  assert.deepEqual(result.scoped, ['specs/capabilities/auth.md', 'specs/engineering/backend.md']);
+  assert.deepEqual(result.changes, ['specs/changes/session.md']);
+  assert.deepEqual(result.available[0], {
+    id: 'auth.session', path: 'specs/capabilities/auth.md', applies_to: ['src/auth/**', 'tests/auth/*'],
+  });
+  assert.equal(fs.existsSync(path.join(project.root, 'specs/.charterleaf.json')), false);
+  assert.deepEqual(resolveRelated('unmatched/file', project.root).scoped, []);
+}));
+
+test('Core: structured routing reports parse errors while CLI retains exit-code behavior', () => withProject((project) => {
+  project.write('specs/capabilities/bad.md', '---\napplies_to: src/**\n---\n');
+  assert.throws(() => resolveRelated('src/a', project.root), /applies_to must be a list/);
+  assert.equal(project.run('related', 'src/a').code, 2);
+}));
+
+
+test('lint: commented delta headings and IDs do not create references or conflicts', () => withLintProject((project) => {
+  project.write('specs/changes/add.md', `---
+affects: [auth.session]
+---
+## ADD
+### AUTH-003 — Rotation
+The system MUST rotate a session.
+<!-- Example AUTH-001 and AUTH-999 are not delta references.
+## REMOVE
+AUTH-002
+-->
+`);
+  project.write('specs/changes/modify.md', '---\naffects: [auth.session]\n---\n## MODIFY\nAUTH-002\n<!-- AUTH-999 -->\n');
+  const result = project.run('lint');
+  assert.equal(result.code, 0, result.out);
+  assert.equal(result.out, '0 structural errors\n');
 }));
