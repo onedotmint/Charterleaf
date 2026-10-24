@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveRelated, lint } = require('../lib/charterleaf.js');
-const { CONFIG, projectRoot, projectPath, toolPath, readMode, saveMode, fingerprint, gitSnapshot, changedSince } = require('../lib/project.js');
+const { projectRoot, projectPath, toolPath, modeConfigPath, isModeConfig, readMode, saveMode, fingerprint, gitSnapshot, changedSince } = require('../lib/project.js');
 
 const OPTIONS = [
   'Auto (recommended) — read constraints and maintain only durable knowledge',
@@ -13,6 +13,12 @@ const OPTIONS = [
   'Not Enable — disable; keep existing documents',
 ];
 const MODES = ['auto', 'confirm', 'reference', 'off'];
+const MODE_EFFECTS = {
+  auto: 'Automatic constraint loading and code edit checks; maintain only justified durable specs.',
+  confirm: 'Automatic constraint loading and code edit checks; approve each spec modification.',
+  reference: 'Automatic constraint loading and code edit checks; never modify specs.',
+  off: 'Automation off: no automatic constraint loading or code edit checks; existing documents preserved.',
+};
 const isSpec = (file) => file === 'specs' || file.startsWith('specs/');
 const message = (content) => ({ type: 'custom_message', customType: 'charterleaf', content, display: false });
 
@@ -32,8 +38,14 @@ module.exports = function charterleaf(pi) {
     return state;
   }
 
+  function related(file, root) {
+    // Mode survives branch switches even when the new branch has no specs yet.
+    if (!fs.existsSync(path.join(root, 'specs'))) return { global: [], scoped: [], changes: [], available: [] };
+    return resolveRelated(file, root);
+  }
+
   function route(s, file) {
-    const result = resolveRelated(file, s.root);
+    const result = related(file, s.root);
     const notes = [];
     let required = false;
     for (const spec of [...result.global, ...result.scoped, ...result.changes]) {
@@ -68,12 +80,23 @@ module.exports = function charterleaf(pi) {
 
   function completePages(s, file, hash, event) {
     const text = event.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
-    const footer = /\n\n\[(?:Showing lines \d+-\d+ of \d+[^\n]*|\d+ more lines in file\.[^\n]*)Use offset=\d+ to continue\.\]$/;
+    const footer = /\n\n(?:\[(?:Showing lines \d+-\d+ of \d+[^\n]*|\d+ more lines in file\.[^\n]*)Use offset=\d+ to continue\.\]|\(File is large; use startLine\/endLine or offset\/limit to read a section\.\))$/;
     const body = text.replace(footer, '');
     const lines = fs.readFileSync(path.join(s.root, file), 'utf8').split('\n');
     const start = (event.input.startLine || event.input.offset || 1) - 1;
-    const end = start + body.split('\n').length;
-    if (start < 0 || end > lines.length || lines.slice(start, end).join('\n') !== body) return false;
+    let end = start + body.split('\n').length;
+    if (start < 0) return false;
+    if (end > lines.length || lines.slice(start, end).join('\n') !== body) {
+      const numbered = body.split('\n');
+      // AFT adds sequential line labels and a final display newline, not file content.
+      if (numbered.at(-1) === '') numbered.pop();
+      if (!numbered.length || !numbered.every((line, i) => {
+        const match = line.match(/^ *(\d+): (.*)$/);
+        return match && Number(match[1]) === start + i + 1 && match[2] === lines[start + i]?.replace(/\r$/, '');
+      })) return false;
+      end = start + numbered.length;
+      if (end === lines.length - 1 && lines.at(-1) === '') end++;
+    }
     let pages = s.pages.get(file);
     if (!pages || pages.hash !== hash) pages = { hash, ranges: [] };
     pages.ranges.push([start, end]);
@@ -107,13 +130,19 @@ module.exports = function charterleaf(pi) {
         const root = projectRoot(ctx.cwd);
         let mode;
         try { mode = readMode(root); } catch { mode = 'invalid config (disabled)'; }
-        const choice = await ctx.ui.select(`Charterleaf — ${mode}\n${root}`, OPTIONS);
+        const config = modeConfigPath(root);
+        const status = mode === 'off'
+          ? (fs.existsSync(config) ? 'off (disabled)' : 'off (not configured)') : mode;
+        const effect = MODE_EFFECTS[mode] || MODE_EFFECTS.off;
+        const adoption = !MODES.includes(mode) || mode === 'off'
+          ? '\nExisting specs do not enable automation; choose a mode to enable it.' : '';
+        const choice = await ctx.ui.select(`Charterleaf — ${status}\n${root}\n${effect}${adoption}`, OPTIONS);
         const index = OPTIONS.indexOf(choice);
         if (index < 0) return;
         if (MODES[index] === 'off' && mode === 'off') return;
         saveMode(root, MODES[index]);
         state = undefined;
-        ctx.ui.notify(`Charterleaf: ${MODES[index]} (saved to ${CONFIG})`, 'info');
+        ctx.ui.notify(`Charterleaf: ${MODES[index]} — ${MODE_EFFECTS[MODES[index]]} (saved to ${config})`, 'info');
       } catch (error) { report(ctx, `Charterleaf: ${error.message}`); }
     },
   });
@@ -180,6 +209,9 @@ module.exports = function charterleaf(pi) {
     if (!['read', 'write', 'edit'].includes(event.toolName)) return;
     const mutation = event.toolName !== 'read';
     try {
+      if (mutation && isModeConfig(s.root, ctx.cwd, event.input.path)) {
+        return { block: true, reason: 'Only the user may change Charterleaf mode via /charterleaf.' };
+      }
       const file = projectPath(s.root, ctx.cwd, event.input.path);
       const lexical = typeof event.input.path === 'string'
         ? path.relative(s.root, path.resolve(ctx.cwd, toolPath(event.input.path))).replaceAll('\\', '/') : null;
@@ -192,9 +224,6 @@ module.exports = function charterleaf(pi) {
       // Execute the exact normalized path checked here, including Pi's @/file:/space aliases.
       const target = path.join(s.root, file);
       event.input.path = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/.test(target) ? pathToFileURL(target).href : target;
-      if (mutation && (file === CONFIG || lexical === CONFIG || file === projectPath(s.root, s.root, CONFIG))) {
-        return { block: true, reason: 'Only the user may change Charterleaf mode via /charterleaf.' };
-      }
       if (mutation && (isSpec(file) || (lexical && isSpec(lexical)))) {
         if (s.mode === 'reference') return { block: true, reason: 'Charterleaf Reference mode: report a proposal; do not modify specs.' };
         if (s.mode === 'confirm') {
@@ -272,7 +301,8 @@ module.exports = function charterleaf(pi) {
           }
         } else if (!call.mutation) {
           if (isSpec(call.file)) {
-            const fullRead = event.input.offset === undefined && event.input.startLine === undefined &&
+            const fullRead = !/^ *\d+: /.test(visible) &&
+              event.input.offset === undefined && event.input.startLine === undefined &&
               event.input.limit === undefined && event.input.endLine === undefined &&
               event.details?.truncation?.truncated !== true &&
               !event.content.some((part) => part.type === 'text' &&
@@ -317,13 +347,13 @@ module.exports = function charterleaf(pi) {
       const observed = changedSince(s.before, after);
       const owned = [...s.owned].filter(([file, hash]) => fingerprint(s.root, file) === hash && !isSpec(file)).map(([file]) => file);
       const unattributed = observed.filter((file) => !s.owned.has(file) || fingerprint(s.root, file) !== s.owned.get(file));
-      const emptySpecs = s.knowledge === 'no-value' && resolveRelated('', s.root).available.length === 0;
+      const emptySpecs = s.knowledge === 'no-value' && related('', s.root).available.length === 0;
       if (s.knowledge === 'no-value' && !(emptySpecs && owned.length > 0)) return;
       const candidate = s.knowledge === 'review';
       if (!candidate && !owned.length && !unattributed.length && !(s.opaque && !comparable)) return;
       const relevant = new Set();
       for (const file of [...owned, ...unattributed].slice(0, 50)) {
-        const result = resolveRelated(file, s.root);
+        const result = related(file, s.root);
         for (const spec of [...result.global, ...result.scoped, ...result.changes]) relevant.add(spec);
       }
       const content = `Charterleaf final review — once only; mode=${s.mode}.\n` +

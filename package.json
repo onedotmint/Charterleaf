@@ -38,6 +38,7 @@
   ],
   "scripts": {
     "test": "node --test",
+    "test:package": "node scripts/package-smoke.js",
     "test:pi": "node scripts/pi-smoke.js",
     "test:organic": "node scripts/organic-smoke.js",
     "test:context": "node scripts/context-smoke.js"

@@ -9,7 +9,7 @@ const test = require('node:test');
 
 const charterleaf = require('../extensions/charterleaf.js');
 const {
-  CONFIG, projectRoot, projectPath, readMode, saveMode, fingerprint, gitSnapshot, changedSince,
+  CONFIG, projectRoot, projectPath, modeConfigPath, isModeConfig, readMode, saveMode, fingerprint, gitSnapshot, changedSince,
 } = require('../lib/project.js');
 
 const SPEC = 'specs/capabilities/service.md';
@@ -130,6 +130,14 @@ function text(result) {
   return result?.content?.filter((part) => part.type === 'text').map((part) => part.text).join('\n') || '';
 }
 
+function numberedPage(body, offset = 1, limit = 2000) {
+  const lines = body.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+  const page = lines.slice(offset - 1, offset - 1 + limit);
+  const width = String(offset + page.length - 1).length;
+  return page.map((line, i) => `${String(offset + i).padStart(width)}: ${line}`).join('\n') + '\n';
+}
+
 function review(result) {
   assert.equal(result.continue, true);
   const entry = result.entries.at(-1);
@@ -179,12 +187,23 @@ test('menu: first enable, switch, disable, restore and cancel preserve project d
   };
   await choose(0);
   assert.equal(readMode(p.root), 'auto');
-  assert.match(h.selections[0][0], /Charterleaf — off/);
+  assert.match(h.selections[0][0], /Charterleaf — off \(not configured\)/);
+  assert.match(h.selections[0][0], /no automatic constraint loading or code edit checks/);
+  assert.match(h.selections[0][0], /Existing specs do not enable automation; choose a mode/);
+  assert.match(h.notifications.at(-1)[0], /auto — Automatic constraint loading and code edit checks; maintain only justified durable specs/);
   assert.ok(h.selections[0][0].includes(p.root));
   assert.equal(h.selections[0][1].length, 4);
   for (const [index, mode] of [[1, 'confirm'], [2, 'reference'], [3, 'off'], [0, 'auto']]) {
     await choose(index);
     assert.equal(readMode(p.root), mode);
+    const expected = {
+      confirm: /approve each spec modification/,
+      reference: /never modify specs/,
+      off: /no automatic constraint loading or code edit checks; existing documents preserved/,
+      auto: /maintain only justified durable specs/,
+    };
+    assert.match(h.notifications.at(-1)[0], expected[mode]);
+    assert.ok(h.notifications.at(-1)[0].includes(`saved to ${modeConfigPath(p.root)}`));
     assert.equal(p.read(SPEC), CONTRACT);
     assert.equal(p.read('specs/constitution.md'), GLOBAL);
   }
@@ -206,6 +225,22 @@ test('menu: cancel and Not Enable on an unconfigured project create nothing', as
   h.select = (_title, options) => options[3];
   await h.menu();
   assert.equal(fs.existsSync(p.file('specs')), false);
+  assert.deepEqual(h.notifications, []);
+});
+
+test('menu: saved off is distinct from unconfigured without enabling or scanning specs', async (t) => {
+  const p = project(t, { mode: 'off' });
+  p.write(SPEC, '{invalid spec metadata does not prevent the mode menu');
+  const before = p.read(CONFIG);
+  const h = api(p);
+  await h.emit('session_start');
+  assert.deepEqual(h.selections, []);
+  assert.deepEqual(h.notifications, []);
+  await h.menu();
+  assert.match(h.selections[0][0], /off \(disabled\)/);
+  assert.doesNotMatch(h.selections[0][0], /not configured/);
+  assert.match(h.selections[0][0], /Existing specs do not enable automation/);
+  assert.equal(p.read(CONFIG), before);
   assert.deepEqual(h.notifications, []);
 });
 
@@ -665,6 +700,173 @@ test('project helpers: config validation, atomic persistence, and off preserve s
   }
 });
 
+for (const variable of ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE']) {
+  test(`Git mode: inherited ${variable} cannot read, change or migrate another repository's authorization`, (t) => {
+    const p = project(t, { git: true, mode: null });
+    const other = project(t, { git: true, mode: null });
+    saveMode(p.root, 'off');
+    saveMode(other.root, 'auto');
+    const local = modeConfigPath(p.root);
+    const foreign = modeConfigPath(other.root);
+    const before = fs.readFileSync(foreign, 'utf8');
+    const previous = process.env[variable];
+    process.env[variable] = variable === 'GIT_WORK_TREE' ? other.root : other.file('.git');
+    try {
+      assert.equal(modeConfigPath(p.root), local);
+      assert.equal(readMode(p.root), 'off');
+      saveMode(p.root, 'reference');
+      assert.equal(fs.readFileSync(foreign, 'utf8'), before);
+      fs.unlinkSync(local);
+      fs.unlinkSync(foreign);
+      p.write(CONFIG, JSON.stringify({ version: 1, mode: 'confirm' }));
+      assert.equal(readMode(p.root), 'confirm');
+      assert.equal(fs.existsSync(foreign), false, 'migration must not write foreign Git metadata');
+    } finally {
+      if (previous === undefined) delete process.env[variable];
+      else process.env[variable] = previous;
+    }
+  });
+}
+
+test('Git mode: nested legacy Auto cannot override repository off or keep mode branch-local', async (t) => {
+  const p = project(t, { git: true, mode: null });
+  saveMode(p.root, 'off');
+  p.write(`packages/app/${CONFIG}`, JSON.stringify({ version: 1, mode: 'auto' }));
+  const nested = p.file('packages/app');
+  const before = p.read(`packages/app/${CONFIG}`);
+  assert.equal(projectRoot(nested), p.root);
+  assert.equal(readMode(projectRoot(nested)), 'off');
+  const h = api(p);
+  h.ctx.cwd = nested;
+  assert.equal(await h.emit('before_agent_start'), undefined);
+  h.select = (_title, options) => options[2];
+  await h.menu();
+  assert.equal(readMode(p.root), 'reference');
+  assert.equal(p.read(`packages/app/${CONFIG}`), before);
+});
+
+for (const mode of ['auto', 'confirm', 'reference', 'off']) {
+  test(`Git mode: migrates legacy ${mode} without changing the worktree`, (t) => {
+    const p = project(t, { git: true, mode: null });
+    p.write(CONFIG, JSON.stringify({ version: 1, mode }) + '\n');
+    const before = p.git('status', '--porcelain');
+    const legacy = p.read(CONFIG);
+    assert.equal(readMode(p.root), mode);
+    assert.equal(modeConfigPath(p.root), p.file('.git/charterleaf.json'));
+    assert.deepEqual(JSON.parse(fs.readFileSync(modeConfigPath(p.root), 'utf8')), { version: 1, mode });
+    assert.equal(p.read(CONFIG), legacy);
+    assert.equal(p.git('status', '--porcelain'), before);
+    fs.unlinkSync(p.file(CONFIG));
+    assert.equal(readMode(p.root), mode);
+    p.write(CONFIG, '{invalid stale branch config');
+    assert.equal(readMode(p.root), mode, 'local choice takes precedence over branch files');
+  });
+}
+
+test('Git mode: migration cannot overwrite a concurrent explicit off choice', (t) => {
+  const p = project(t, { git: true, mode: null });
+  p.write(CONFIG, JSON.stringify({ version: 1, mode: 'auto' }));
+  const link = fs.linkSync;
+  fs.linkSync = (temporary, target) => {
+    saveMode(p.root, 'off');
+    return link(temporary, target);
+  };
+  try { assert.equal(readMode(p.root), 'off'); }
+  finally { fs.linkSync = link; }
+  assert.equal(readMode(p.root), 'off');
+  assert.deepEqual(fs.readdirSync(p.file('.git')).filter((name) => name.endsWith('.tmp')), []);
+});
+
+test('Git mode: invalid legacy/local configs and escaping symlinks never authorize migration', (t) => {
+  const p = project(t, { git: true, mode: null });
+  const file = modeConfigPath(p.root);
+  p.write(CONFIG, '{broken');
+  assert.throws(() => readMode(p.root));
+  assert.equal(fs.existsSync(file), false);
+  p.write(CONFIG, JSON.stringify({ version: 1, mode: 'auto' }));
+  fs.writeFileSync(file, '{broken');
+  assert.throws(() => readMode(p.root), 'invalid local choice cannot fall back to legacy Auto');
+  const outside = project(t);
+  fs.unlinkSync(file);
+  fs.symlinkSync(outside.file(CONFIG), file);
+  const before = outside.read(CONFIG);
+  assert.throws(() => readMode(p.root), /escapes project storage/);
+  assert.throws(() => saveMode(p.root, 'off'), /escapes project storage/);
+  assert.equal(outside.read(CONFIG), before);
+});
+
+test('Git mode: real branch switches preserve authorization but load current branch constraints', async (t) => {
+  const p = project(t, { git: true });
+  const original = p.git('branch', '--show-current').trim();
+  const h = api(p);
+  await h.prime();
+  assert.equal(readMode(p.root), 'auto');
+  p.git('checkout', '--quiet', '-b', 'without-legacy-mode');
+  p.git('rm', '--quiet', CONFIG);
+  p.write(SPEC, CONTRACT.replace('public return shape', 'new branch error contract'));
+  p.git('add', SPEC);
+  p.git('-c', 'user.name=Mode Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Different branch contracts');
+  assert.equal(fs.existsSync(p.file(CONFIG)), false);
+  assert.equal(readMode(p.root), 'auto');
+  assert.match(text(await h.read()), /new branch error contract/);
+  assert.equal((await h.emit('tool_call', h.call('edit', { path: SOURCE }))).block, true);
+  await h.emit('context');
+  assert.equal(await h.emit('tool_call', h.call('edit', { path: SOURCE })), undefined);
+  saveMode(p.root, 'off');
+  p.git('checkout', '--quiet', original);
+  assert.equal(JSON.parse(p.read(CONFIG)).mode, 'auto');
+  assert.equal(readMode(p.root), 'off', 'old tracked Auto must not undo an explicit local disable');
+  assert.equal(await h.emit('before_agent_start'), undefined);
+});
+
+test('Git mode: enabled branches without specs permit code work and organic first-spec capture', async (t) => {
+  const p = project(t, { git: true, mode: null, specs: false });
+  assert.equal(readMode(p.root), 'off');
+  assert.equal(fs.existsSync(modeConfigPath(p.root)), false);
+  const h = api(p);
+  h.select = (_title, options) => options[0];
+  await h.menu();
+  assert.equal(readMode(p.root), 'auto');
+  assert.equal(fs.existsSync(p.file('specs')), false, 'enabling must not bootstrap documents');
+  assert.equal(p.git('status', '--porcelain'), '');
+  p.git('checkout', '--quiet', '-b', 'still-no-specs');
+  assert.match((await h.emit('before_agent_start')).message.content, /mode=auto/);
+  assert.doesNotMatch(text(await h.read()), /check failed/);
+  assert.equal(await h.emit('tool_call', h.call('edit', { path: SOURCE })), undefined);
+  await h.write(SOURCE, 'changed code');
+  await h.assistant('No durable change. <!-- charterleaf: no-value -->');
+  assert.match(review(await h.settle()), /empty-spec project/);
+  assert.match(text(await h.write(SPEC, CONTRACT)), /0 structural errors/);
+  assert.equal(p.read(SPEC), CONTRACT);
+});
+
+test('Git mode: linked worktrees share mode, independent repos do not, and config aliases stay user-owned', async (t) => {
+  const p = project(t, { git: true, mode: null });
+  const linked = p.file('linked');
+  p.git('worktree', 'add', '--quiet', '--detach', linked);
+  saveMode(p.root, 'auto');
+  assert.equal(modeConfigPath(linked), modeConfigPath(p.root));
+  assert.equal(readMode(linked), 'auto');
+  saveMode(linked, 'off');
+  assert.equal(readMode(p.root), 'off');
+  const independent = project(t, { git: true, mode: null });
+  assert.equal(readMode(independent.root), 'off');
+  assert.equal(fs.existsSync(modeConfigPath(independent.root)), false);
+  saveMode(p.root, 'auto');
+  const h = api(p);
+  h.ctx.cwd = linked;
+  fs.symlinkSync(modeConfigPath(p.root), path.join(linked, 'mode-alias.json'));
+  for (const input of [modeConfigPath(p.root), `@${modeConfigPath(p.root)}`, new URL(`file://${modeConfigPath(p.root)}`).href,
+    path.relative(linked, modeConfigPath(p.root)), 'mode-alias.json', CONFIG]) {
+    assert.equal(isModeConfig(linked, linked, input), true);
+    for (const toolName of ['write', 'edit']) {
+      const result = await h.emit('tool_call', h.call(toolName, { path: input, content: '{}' }));
+      assert.match(result.reason, /Only the user/);
+    }
+  }
+  assert.equal(readMode(p.root), 'auto');
+});
+
 test('project helpers: normalize separators and reject traversal, prefix siblings, invalid input and escaping symlinks', (t) => {
   const p = project(t);
   const outside = project(t, { mode: null, specs: false });
@@ -728,10 +930,11 @@ test('project helpers: real Git snapshots cover staged, deleted and untracked fi
   p.write(SOURCE, 'new dirty');
   p.git('add', SOURCE);
   fs.rmSync(p.file(SPEC));
-  p.write('new\nfile.txt', 'new untracked');
+  const untracked = process.platform === 'win32' ? 'new file.txt' : 'new\nfile.txt';
+  p.write(untracked, 'new untracked');
   const after = gitSnapshot(p.root);
   assert.equal(after.get(SPEC), 'missing');
-  assert.deepEqual(changedSince(before, after), [SPEC, SOURCE, 'new\nfile.txt'].sort());
+  assert.deepEqual(changedSince(before, after), [SPEC, SOURCE, untracked].sort());
   assert.deepEqual(changedSince(null, after), []);
   assert.deepEqual(changedSince(before, null), []);
   assert.equal(gitSnapshot(p.file('src')), null, 'nested path is not a repository root');
@@ -974,7 +1177,10 @@ test('compact runtime rules are supplied once per branch; the full authoring gui
   assert.match(first.message.content, /Guide .*SKILL\.md/);
   assert.match(first.message.content, /Modes govern specs, not code/);
   assert.match(first.message.content, /Internal\/refactor requests do not authorize changing return or ownership contracts/);
-  assert.ok(Buffer.byteLength(first.message.content) < 2400, 'compact rules must retain the contract and approval distinctions');
+  // Installation paths vary; only fixed guidance belongs to the context budget.
+  const packageRoot = path.dirname(path.dirname(require.resolve('../extensions/charterleaf.js')));
+  const normalized = first.message.content.replaceAll(p.root, '<root>').replaceAll(packageRoot, '<package>');
+  assert.ok(Buffer.byteLength(normalized) < 2400, 'compact rules must retain the contract and approval distinctions');
   const second = await h.emit('before_agent_start');
   assert.doesNotMatch(second.message.content, /## One final semantic review/);
   assert.match(second.message.content, /mode=auto/);
@@ -1114,6 +1320,73 @@ for (const options of [{ offset: 1, limit: 2000 }, { limit: 500 }, { startLine: 
     assert.equal((await h.emit('tool_call', h.call('edit', { path: SOURCE }))).block, true);
     await h.emit('context');
     assert.equal(await h.emit('tool_call', h.call('edit', { path: SOURCE })), undefined);
+  });
+}
+
+for (const options of [{ offset: 1, limit: 2000 }, { startLine: 1, endLine: 500 }, {}]) {
+  test(`AFT: complete numbered spec read ${JSON.stringify(options)} releases only after context`, async (t) => {
+    for (const ending of ['\n', '', '\r\n']) {
+      const p = project(t);
+      const body = (CONTRACT + '\n 1: literal source prefix\n' + Array.from({ length: 180 }, (_, i) => `Constraint ${i}: preserve caller inputs and public return shapes.`).join('\n')).replace(/\n/g, ending === '\r\n' ? '\r\n' : '\n') + ending;
+      p.write(SPEC, body);
+      assert.ok(Buffer.byteLength(body) > 8000);
+      const h = api(p);
+      await h.read('specs/constitution.md');
+      const call = h.call('read', { path: SPEC, ...options });
+      await h.emit('tool_call', call);
+      await h.result(call, { content: [{ type: 'text', text: numberedPage(body) }] });
+      assert.equal((await h.emit('tool_call', h.call('edit', { path: SOURCE }))).block, true);
+      await h.emit('context');
+      assert.equal(await h.emit('tool_call', h.call('edit', { path: SOURCE })), undefined);
+    }
+  });
+}
+
+test('AFT: verified numbered pages support overlap and out-of-order completion', async (t) => {
+  const p = project(t);
+  const body = CONTRACT + Array.from({ length: 180 }, (_, i) => `Constraint ${i}: preserve caller inputs and public return shapes.\n`).join('');
+  p.write(SPEC, body);
+  const h = api(p);
+  await h.read('specs/constitution.md');
+  for (const [offset, limit] of [[101, 200], [1, 60], [50, 60]]) {
+    const call = h.call('read', { path: SPEC, offset, limit });
+    await h.emit('tool_call', call);
+    await h.result(call, { content: [{ type: 'text', text: numberedPage(body, offset, limit) + (offset === 1 ? '\n(File is large; use startLine/endLine or offset/limit to read a section.)' : '') }] });
+    assert.equal((await h.emit('tool_call', h.call('edit', { path: SOURCE }))).block, true);
+    await h.emit('context');
+    const gate = await h.emit('tool_call', h.call('edit', { path: SOURCE }));
+    if (offset === 50) assert.equal(gate, undefined);
+    else assert.equal(gate.block, true);
+  }
+});
+
+for (const scenario of ['gap', 'changed-between-pages', 'changed-during-read', 'wrong-number', 'duplicate-number', 'wrong-body', 'truncated-line', 'partial-default-read']) {
+  test(`AFT: ${scenario} cannot credit unread constraints`, async (t) => {
+    const p = project(t);
+    let body = CONTRACT + Array.from({ length: 180 }, (_, i) => `Constraint ${i}: preserve caller inputs and public return shapes.\n`).join('');
+    p.write(SPEC, body);
+    const h = api(p);
+    await h.read('specs/constitution.md');
+    const first = h.call('read', { path: SPEC, offset: 1, limit: 60 });
+    await h.emit('tool_call', first);
+    await h.result(first, { content: [{ type: 'text', text: numberedPage(body, 1, 60) }] });
+    if (scenario === 'changed-between-pages') {
+      body = body.replace('Constraint 0:', 'Changed rule 0:');
+      p.write(SPEC, body);
+    }
+    const offset = scenario === 'gap' ? 101 : scenario === 'changed-between-pages' ? 61 : 1;
+    const call = h.call('read', { path: SPEC, ...(scenario === 'partial-default-read' ? {} : { offset, limit: 2000 }) });
+    await h.emit('tool_call', call);
+    let page = numberedPage(body, offset);
+    if (scenario === 'changed-during-read') p.write(SPEC, body + 'New contract.\n');
+    if (scenario === 'wrong-number') page = page.replace(/1: /, '2: ');
+    if (scenario === 'wrong-body') page = page.replace('preserve caller inputs', 'discard caller inputs');
+    if (scenario === 'truncated-line') page = page.replace('preserve caller inputs', 'preserve [line truncated]');
+    if (scenario === 'partial-default-read') page = numberedPage(body, 1, 60);
+    if (scenario === 'duplicate-number') page = page.replace(/2: /, '1: ');
+    await h.result(call, { content: [{ type: 'text', text: page }] });
+    await h.emit('context');
+    assert.equal((await h.emit('tool_call', h.call('edit', { path: SOURCE }))).block, true);
   });
 }
 

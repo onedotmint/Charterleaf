@@ -58,7 +58,10 @@ minimum does not make older Node versions suitable for the host.
 
 ## Native Pi modes
 
-Run `/charterleaf` in Pi for the native project mode menu:
+Run `/charterleaf` in Pi for the native project mode menu. It distinguishes
+**not configured** from explicitly **disabled**, explains that existing specs do
+not enable automation, and describes the current mode. Saving confirms what the
+selected mode allows, not just where its config was written:
 
 | Choice | Behavior |
 | --- | --- |
@@ -67,20 +70,35 @@ Run `/charterleaf` in Pi for the native project mode menu:
 | **Reference** | Read and check; report proposals or conflicts, never modify specs. |
 | **Not Enable** | Turn automation off; keep existing documents. |
 
-The choice is saved immediately in `specs/.charterleaf.json`:
+The choice is saved immediately in `charterleaf.json` under the absolute directory
+returned by `git rev-parse --path-format=absolute --git-common-dir` (usually
+`.git/charterleaf.json`). All branches and linked worktrees of that repository
+share the mode; independent clones do not. Outside Git, the path remains
+`specs/.charterleaf.json`. The config format is unchanged:
 
 ```json
 { "version": 1, "mode": "off" }
 ```
 
-Valid modes are `auto`, `confirm`, `reference`, and `off`. Missing config
-means **off**; existing `specs/` alone never enables automation. Activation
-is an explicit user choice, not an Agent decision. Enabling creates only
-this config (and its directory if needed), not a constitution or a pile
-of spec documents. Disabling preserves documents; cancel changes nothing.
-Disabled/unconfigured projects get no automatic adoption prompt, task
-context, scan, or document bootstrap. Manual CLI use is independent of
-this config.
+Valid modes are `auto`, `confirm`, `reference`, and `off`. The new repository-local
+config is authoritative whenever it exists, including saved `off`; a branch's
+legacy `specs/.charterleaf.json` cannot override it. If no local config exists,
+the first load imports the saved mode from a valid legacy config on the current branch,
+without overwriting a local config or changing/removing the legacy file or tracked
+worktree. Invalid config reports an error and disables automation, not a fallback
+to another source. Lost authorization is never recovered from Git history or sessions.
+
+With no saved choice, the mode stays **off**; existing `specs/` alone never enables
+automation. This is repository-local opt-in, **not a global Auto default**.
+Activation is an explicit user choice through `/charterleaf`, not an Agent decision.
+Enabling a Git project creates only the local config, never a `specs/` directory or
+spec documents. A branch without `specs/` is valid: normal code reads/edits and later
+evidence-based spec creation still work under the selected mode. Spec content and
+routing always belong to the current worktree, not the shared Git directory.
+Outside Git, saving may create the `specs/` directory for the config only.
+Disabling preserves documents; cancel changes nothing. Disabled/unconfigured
+projects get no automatic adoption prompt, task context, scan, or document bootstrap.
+The two manual CLI commands remain unchanged and independent of this config.
 
 Without UI, saved Auto and Reference modes still read/check constraints;
 Confirm denies spec mutations because approval is unavailable. A refused identical
@@ -109,9 +127,11 @@ request**, not when a parallel sibling tool finishes.
 Automatic spec bodies have a **24,000-byte budget per task** and an
 **8,000-byte per-file limit**. Larger files or exhausted budgets require
 an explicit complete `read`; a partial/truncated read is not full
-knowledge. Native Pi offset pages are credited only when their exact content
-covers the same spec version with no gaps; ordinary prose about truncation does
-not count as a tool truncation notice. On a scoped miss, the Extension supplies metadata only for
+knowledge. Native Pi raw pages and AFT numbered pages (offset/limit or
+startLine/endLine) are credited only when their exact content covers the same
+spec version with no gaps; AFT line labels must be sequential and correct.
+Display newlines and CRLF line endings do not prevent complete-read credit;
+ordinary prose about truncation does not count as a tool truncation notice. On a scoped miss, the Extension supplies metadata only for
 available living specs, capped at 12 entries and 2,000 characters;
 `charterleaf related <path>` provides the full routing list. A miss never
 proves that no constraints apply.
@@ -130,8 +150,9 @@ again. This is task-local bookkeeping, not a watcher or persistent index.
 
 Knowledge capture happens **during normal work**, not just after code changes:
 development, debugging, substantive code/test/architecture investigation and
-accepted technical decisions can establish or uncover durable knowledge. A project
-with only `specs/.charterleaf.json` is a valid initial state. When evidence warrants
+accepted technical decisions can establish or uncover durable knowledge. An enabled
+project with no spec documents (or no `specs/` directory in Git) is a valid initial
+state. When evidence warrants
 it, the Agent creates a concise scoped spec using ordinary authorized `write`/`edit`;
 Core immediately routes its `id`/`applies_to` on later related code reads or edits.
 There is no initialization scan, document quota or adoption wizard.
@@ -386,6 +407,7 @@ Verification commands:
 
 ```bash
 npm test
+npm run test:package  # real tarball install and tests against installed code
 npm run test:pi   # isolated real RPC/UI smoke; no model calls
 CHARTERLEAF_MODEL=deepseek/deepseek-flash npm run test:organic  # paid isolated A–G acceptance
 CHARTERLEAF_MODEL=deepseek/deepseek-flash CHARTERLEAF_BASELINE=5d470db npm run test:context  # paid comparison against v0.4.0
@@ -395,6 +417,11 @@ npm pack --dry-run
 node bin/charterleaf.js related extensions/charterleaf.js
 node bin/charterleaf.js lint
 ```
+
+GitHub Actions runs the installed-package suite on Ubuntu and Windows with Node
+20.0.0, 22.19.0 and 24.x, plus Pi 1.1.0/1.4.0 smoke checks on host-compatible Node.
+CI makes no model calls and retains packaging/test logs. `PI_CLI` can select the
+Pi Node entry point for smoke checks without relying on platform-specific shims.
 
 Validated on Node.js 24.21.0 and Pi 1.1.0: 183 automated Core/Extension tests,
 structural lint, dry-run npm packaging, and real Pi RPC loading/native selection

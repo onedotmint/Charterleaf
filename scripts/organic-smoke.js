@@ -14,6 +14,7 @@ const { once } = require('node:events');
 
 const packageRoot = path.resolve(process.env.CHARTERLEAF_PACKAGE || path.join(__dirname, '..'));
 const extension = path.join(packageRoot, 'extensions/charterleaf.js');
+const { modeConfigPath, readMode } = require(path.join(packageRoot, 'lib/project.js'));
 const timeout = Number(process.env.ORGANIC_TIMEOUT_MS || 600000);
 const config = 'specs/.charterleaf.json';
 const testCommand = ['--test', 'tests/money.test.js'];
@@ -325,6 +326,9 @@ async function main() {
   async function task(name, project, prompt, options, verify) {
     const dir = path.join(temp, name);
     fs.mkdirSync(dir, { recursive: true });
+    readMode(project); // Import the fixture's prior explicit choice into branch-independent storage.
+    const modeFile = modeConfigPath(project);
+    const modeBefore = fs.readFileSync(modeFile, 'utf8');
     const before = snapshot(project);
     json(path.join(dir, 'before.json'), before);
     put(dir, 'prompt.txt', prompt);
@@ -370,7 +374,10 @@ async function main() {
           typeof lastCall.args.path === 'string' && path.resolve(project, lastCall.args.path).startsWith(`${project}/specs/`);
         if (/^\s*<!-- charterleaf: (?:covered|proposed) -->\s*$/m.test(text(lastAssistant)) || captured) assert.equal(summary.finalReviews, 0);
       });
-      check('user mode config preserved', () => assert.equal(snapshot(project)[config], before[config]));
+      check('user mode config preserved', () => {
+        assert.equal(fs.readFileSync(modeFile, 'utf8'), modeBefore);
+        assert.equal(snapshot(project)[config], before[config]);
+      });
       check('no automatic git commit or stage', () => {
         assert.equal(git(['rev-list', '--count', 'HEAD'], project, env).trim(), '1');
         assert.equal(git(['diff', '--cached'], project, env), '');

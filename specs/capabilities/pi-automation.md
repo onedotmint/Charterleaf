@@ -20,7 +20,32 @@ persistent code index. The standalone Core/CLI remains usable without Pi.
 Automation MUST require an explicit saved project mode. Existing `specs/` alone
 MUST NOT enable it. Disabled/unconfigured projects receive no automatic task
 context, dialogs or document writes. `/charterleaf` uses native Pi selection,
-saves immediately, and disabling preserves existing documents.
+saves immediately, and disabling preserves existing documents. The explicit menu
+MUST distinguish unconfigured from saved-off projects, explain that existing specs
+do not enable automation, and describe the selected mode's behavior after saving;
+this MUST NOT add startup prompts or automatic activation.
+
+In Git repositories, the mode MUST be stored in `charterleaf.json` under the
+absolute directory returned by `git rev-parse --path-format=absolute --git-common-dir`
+(usually `.git/charterleaf.json`). All branches and linked worktrees of the same
+repository MUST share this mode; independent clones MUST NOT share it. The nearest
+Git root MUST take precedence over nested legacy config roots, and inherited Git
+location environment variables MUST NOT select another repository's mode storage. Non-Git
+projects MUST continue using `specs/.charterleaf.json`. An existing local config
+MUST be authoritative, especially saved `off`; branch-local legacy config MUST NOT
+override it. If local config is absent, first load MUST import a valid current-branch
+legacy `specs/.charterleaf.json` mode without overwriting local config or
+changing/removing the legacy file or tracked worktree. Invalid config MUST report
+an error and disable automation, never fall back to another source. Missing
+authorization MUST NOT be recovered from Git history or sessions.
+
+Without any saved choice, the mode MUST remain off; this is repository-local opt-in,
+not a global Auto default. Mode selection MUST remain solely through `/charterleaf`;
+the two CLI commands remain unchanged and independent of mode storage. Enabling a
+Git project MUST NOT create `specs/` or spec documents. A branch without `specs/`
+MUST remain valid for normal code reads/edits and later evidence-based spec creation
+under the selected mode. Spec content and routing MUST use the current worktree,
+not the shared Git directory; changing Git branches MUST NOT reset mode authorization.
 
 ### PI-002 — Mode authority
 Auto permits justified durable maintenance, Confirm requires approval for each
@@ -38,6 +63,9 @@ standard read paths receive routed constraints; standard code mutations with
 unseen constraints MUST be blocked until the model has had a chance to see them.
 Parallel sibling results do not count as already seen. Context is bounded;
 oversized specs require explicit reading, not silent truncation as full knowledge.
+Native raw and AFT numbered read pages MUST be credited only when their exact
+content covers the same spec version with no gaps; numbered pages MUST also have
+correct sequential line labels. Display formatting is not missing file content.
 Same-version bodies MAY be reused across tasks only while their delivery remains
 in retained branch context; compaction or branch changes invalidate that credit.
 Full authoring/CLI guidance MUST remain on demand, not fixed task context.

@@ -11,10 +11,21 @@ owner per fact and link to it rather than duplicating it.
 
 Charterleaf automation is explicit opt-in, not implied by this entry or
 by an existing `specs/` directory. In Pi, the user chooses Auto, Confirm,
-Reference or Not Enable through `/charterleaf`; the saved project mode in
-`specs/.charterleaf.json` controls automation. Missing config or `off`
-means no automatic scan, adoption prompt or document creation. Do not
-change activation config on the user's behalf.
+Reference or Not Enable through `/charterleaf`. In Git, the saved mode lives in
+`charterleaf.json` under `git rev-parse --path-format=absolute --git-common-dir`
+(usually `.git/charterleaf.json`), shared by all branches and linked worktrees,
+not independent clones. Outside Git, it remains `specs/.charterleaf.json`.
+The local config is authoritative, including saved `off`; a branch's legacy config
+cannot override it. Only when local config is absent may first load import a valid
+saved mode from current-branch legacy `specs/.charterleaf.json`, without overwriting local
+config or changing the legacy file/worktree. Invalid config means an error and
+disabled automation; never recover lost authorization from Git history or sessions.
+No saved choice means off, not a global Auto default: no automatic scan, adoption
+prompt or document creation. Enabling Git projects creates no `specs/` directory or
+documents; a branch without specs remains usable for normal reads/edits and later
+justified spec creation under the selected mode. Specs route from the current
+worktree, not the shared config directory. Do not change activation config on the
+user's behalf.
 
 For manual use on a concrete repository path, run from the project root:
 
