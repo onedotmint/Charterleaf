@@ -54,4 +54,8 @@ function main() {
 }
 
 try { main(); }
-catch (error) { console.error(error); process.exitCode = 1; }
+catch (error) {
+  fs.writeFileSync(path.join(evidence, 'failure.log'), error.stack || String(error));
+  console.error(error);
+  process.exitCode = 1;
+}
