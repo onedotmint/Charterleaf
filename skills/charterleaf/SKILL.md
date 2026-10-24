@@ -10,11 +10,17 @@ The essential rules live in [runtime.md](runtime.md); read it only if not alread
 
 Read this guide only for unfamiliar spec formats, staged changes or manual CLI use. Ordinary code edits need no Skill read or CLI call when applicable constraints have already been supplied.
 
+## Mode scope
+
+The user chooses the mode only through `/charterleaf`. In Git, it is saved in `charterleaf.json` under `git rev-parse --path-format=absolute --git-common-dir` (usually `.git/charterleaf.json`), shared across the repository's branches and linked worktrees, not independent clones. Outside Git, keep using `specs/.charterleaf.json`. No saved choice means off, never a global Auto default.
+
+An existing local config is authoritative, including saved `off`; branch-local legacy config cannot override it. Only if local config is absent, first load imports the saved mode from a valid current-branch legacy `specs/.charterleaf.json` without overwriting local config or changing/removing the legacy file or tracked worktree. Invalid config must report an error and disable automation, not fall back. Never recover lost authorization from Git history or sessions. Enabling a Git project creates neither `specs/` nor spec documents; spec content and routing remain in the current worktree. The two CLI commands are unchanged and independent of mode storage.
+
 ## Ownership and durable writing
 
 Source owns implementation; tests own executable verification; `AGENTS.md` owns project entry/navigation; specs own durable constraints. Never copy signatures, inventories, current state or existing documentation into specs. Link the authoritative owner instead. Charterleaf is not task management, planning, memory, evidence, history or a project workflow.
 
-Capture during ordinary development, debugging, code/test/architecture investigation or technical decisions; do not wait for settlement or require existing specs. An enabled project containing only `specs/.charterleaf.json` is a valid starting state, not a bootstrap request.
+Capture during ordinary development, debugging, code/test/architecture investigation or technical decisions; do not wait for settlement or require existing specs. An enabled project with no spec documents (or no `specs/` directory in Git) is a valid starting state, not a bootstrap request; normal code reads/edits and later justified spec creation remain allowed under the selected mode.
 
 Distinguish **newly established knowledge** (an accepted new contract/decision) from **newly discovered knowledge** (an existing but ineffectively documented constraint). Either can qualify without code changes; neither obliges every task to produce a document. Apply all three checks:
 

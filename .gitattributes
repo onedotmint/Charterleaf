@@ -1,0 +1,2 @@
+# Keep packaged text and executable shebangs identical across platforms.
+* text=auto eol=lf

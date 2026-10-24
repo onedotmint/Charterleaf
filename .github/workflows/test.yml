@@ -1,0 +1,48 @@
+name: Package and platform tests
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }} / Pi ${{ matrix.pi || 'none' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '20.0.0' }
+          - { os: windows-latest, node: '20.0.0' }
+          - { os: ubuntu-latest, node: '22.19.0', pi: '1.1.0' }
+          - { os: windows-latest, node: '22.19.0', pi: '1.1.0' }
+          - { os: ubuntu-latest, node: '22.19.0', pi: '1.4.0' }
+          - { os: windows-latest, node: '22.19.0', pi: '1.4.0' }
+          - { os: ubuntu-latest, node: '24.x', pi: '1.4.0' }
+          - { os: windows-latest, node: '24.x', pi: '1.4.0' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install isolated Pi host
+        if: matrix.pi
+        run: npm install --prefix "${{ runner.temp }}/charterleaf-pi" --ignore-scripts --no-audit --no-fund --omit=dev @earendil-works/pi-coding-agent@${{ matrix.pi }}
+      - name: Test installed npm package
+        id: package
+        run: npm run test:package
+        env:
+          PI_CLI: ${{ matrix.pi && format('{0}/charterleaf-pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js', runner.temp) || '' }}
+      - name: Retain package and validation evidence
+        if: always() && steps.package.outputs.evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ matrix.os }}-node-${{ matrix.node }}-pi-${{ matrix.pi || 'none' }}
+          path: ${{ steps.package.outputs.evidence }}
+          retention-days: 14

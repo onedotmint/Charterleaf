@@ -39,7 +39,7 @@ pi install npm:@onedotmint/charterleaf
 For the standalone CLI, use `npm install -g @onedotmint/charterleaf`.
 For local development, use `pi install /absolute/path/to/charterleaf` (a package
 directory, not a `.tgz` file). To test the CLI from a local package, run `npm pack`
-then `npm install -g ./onedotmint-charterleaf-0.4.1.tgz`.
+then `npm install -g ./onedotmint-charterleaf-0.4.2.tgz`.
 
 Restart Pi or run `/reload` after installation, then use `/charterleaf` in each
 project you want to enable. To stop automation, choose **Not Enable** in that
@@ -51,14 +51,17 @@ directly and supplies the bundled CLI entry point for optional manual checks.
 
 The **Core/CLI** runs standalone on Node.js **20+**, has no dependencies,
 and requires no Pi. The **Pi Extension** is tested against
-`@earendil-works/pi-coding-agent` **1.1.0** and uses `agent_before_settle`:
+`@earendil-works/pi-coding-agent` **1.1.0 and 1.4.0** and uses `agent_before_settle`:
 it requires a host with that compatible Extension API, not just any Pi
 version. That Pi host requires Node.js **22.19.0+**; the Core's lower
 minimum does not make older Node versions suitable for the host.
 
 ## Native Pi modes
 
-Run `/charterleaf` in Pi for the native project mode menu:
+Run `/charterleaf` in Pi for the native project mode menu. It distinguishes
+**not configured** from explicitly **disabled**, explains that existing specs do
+not enable automation, and describes the current mode. Saving confirms what the
+selected mode allows, not just where its config was written:
 
 | Choice | Behavior |
 | --- | --- |
@@ -67,20 +70,35 @@ Run `/charterleaf` in Pi for the native project mode menu:
 | **Reference** | Read and check; report proposals or conflicts, never modify specs. |
 | **Not Enable** | Turn automation off; keep existing documents. |
 
-The choice is saved immediately in `specs/.charterleaf.json`:
+The choice is saved immediately in `charterleaf.json` under the absolute directory
+returned by `git rev-parse --path-format=absolute --git-common-dir` (usually
+`.git/charterleaf.json`). All branches and linked worktrees of that repository
+share the mode; independent clones do not. Outside Git, the path remains
+`specs/.charterleaf.json`. The config format is unchanged:
 
 ```json
 { "version": 1, "mode": "off" }
 ```
 
-Valid modes are `auto`, `confirm`, `reference`, and `off`. Missing config
-means **off**; existing `specs/` alone never enables automation. Activation
-is an explicit user choice, not an Agent decision. Enabling creates only
-this config (and its directory if needed), not a constitution or a pile
-of spec documents. Disabling preserves documents; cancel changes nothing.
-Disabled/unconfigured projects get no automatic adoption prompt, task
-context, scan, or document bootstrap. Manual CLI use is independent of
-this config.
+Valid modes are `auto`, `confirm`, `reference`, and `off`. The new repository-local
+config is authoritative whenever it exists, including saved `off`; a branch's
+legacy `specs/.charterleaf.json` cannot override it. If no local config exists,
+the first load imports the saved mode from a valid legacy config on the current branch,
+without overwriting a local config or changing/removing the legacy file or tracked
+worktree. Invalid config reports an error and disables automation, not a fallback
+to another source. Lost authorization is never recovered from Git history or sessions.
+
+With no saved choice, the mode stays **off**; existing `specs/` alone never enables
+automation. This is repository-local opt-in, **not a global Auto default**.
+Activation is an explicit user choice through `/charterleaf`, not an Agent decision.
+Enabling a Git project creates only the local config, never a `specs/` directory or
+spec documents. A branch without `specs/` is valid: normal code reads/edits and later
+evidence-based spec creation still work under the selected mode. Spec content and
+routing always belong to the current worktree, not the shared Git directory.
+Outside Git, saving may create the `specs/` directory for the config only.
+Disabling preserves documents; cancel changes nothing. Disabled/unconfigured
+projects get no automatic adoption prompt, task context, scan, or document bootstrap.
+The two manual CLI commands remain unchanged and independent of this config.
 
 Without UI, saved Auto and Reference modes still read/check constraints;
 Confirm denies spec mutations because approval is unavailable. A refused identical
@@ -109,9 +127,11 @@ request**, not when a parallel sibling tool finishes.
 Automatic spec bodies have a **24,000-byte budget per task** and an
 **8,000-byte per-file limit**. Larger files or exhausted budgets require
 an explicit complete `read`; a partial/truncated read is not full
-knowledge. Native Pi offset pages are credited only when their exact content
-covers the same spec version with no gaps; ordinary prose about truncation does
-not count as a tool truncation notice. On a scoped miss, the Extension supplies metadata only for
+knowledge. Native Pi raw pages and AFT numbered pages (offset/limit or
+startLine/endLine) are credited only when their exact content covers the same
+spec version with no gaps; AFT line labels must be sequential and correct.
+Display newlines and CRLF line endings do not prevent complete-read credit;
+ordinary prose about truncation does not count as a tool truncation notice. On a scoped miss, the Extension supplies metadata only for
 available living specs, capped at 12 entries and 2,000 characters;
 `charterleaf related <path>` provides the full routing list. A miss never
 proves that no constraints apply.
@@ -130,8 +150,9 @@ again. This is task-local bookkeeping, not a watcher or persistent index.
 
 Knowledge capture happens **during normal work**, not just after code changes:
 development, debugging, substantive code/test/architecture investigation and
-accepted technical decisions can establish or uncover durable knowledge. A project
-with only `specs/.charterleaf.json` is a valid initial state. When evidence warrants
+accepted technical decisions can establish or uncover durable knowledge. An enabled
+project with no spec documents (or no `specs/` directory in Git) is a valid initial
+state. When evidence warrants
 it, the Agent creates a concise scoped spec using ordinary authorized `write`/`edit`;
 Core immediately routes its `id`/`applies_to` on later related code reads or edits.
 There is no initialization scan, document quota or adoption wizard.
@@ -363,7 +384,8 @@ Important limits:
    path that was checked; spec authorization also preserves the original path's
    protected identity when a spec symlink points elsewhere inside the project.
   Foreign UNC paths are not interpreted as local paths; symlink escapes are
-  rejected for project spec writes. Native Windows behavior needs platform testing.
+  rejected for project spec writes. Native Windows CLI, helper/Extension tests and
+  RPC mode persistence are covered by hosted CI; platform-specific permissions still apply.
 - `related` has no filesystem awareness of the supplied target path and
   no proof of routing coverage. Task-local hashes are not a continuous
   monitor of external changes. A single spec line larger than Pi's read byte
@@ -386,6 +408,7 @@ Verification commands:
 
 ```bash
 npm test
+npm run test:package  # real tarball install and tests against installed code
 npm run test:pi   # isolated real RPC/UI smoke; no model calls
 CHARTERLEAF_MODEL=deepseek/deepseek-flash npm run test:organic  # paid isolated A–G acceptance
 CHARTERLEAF_MODEL=deepseek/deepseek-flash CHARTERLEAF_BASELINE=5d470db npm run test:context  # paid comparison against v0.4.0
@@ -396,10 +419,20 @@ node bin/charterleaf.js related extensions/charterleaf.js
 node bin/charterleaf.js lint
 ```
 
-Validated on Node.js 24.21.0 and Pi 1.1.0: 183 automated Core/Extension tests,
-structural lint, dry-run npm packaging, and real Pi RPC loading/native selection
-for cancellation, mode changes, disable and cross-process restore. The RPC smoke
-uses isolated temporary projects/settings and makes no model calls.
+GitHub Actions runs the installed-package suite on Ubuntu and Windows with Node
+20.0.0, 22.19.0 and 24.x, plus Pi 1.1.0/1.4.0 smoke checks on host-compatible Node.
+CI makes no model calls and retains packaging/test logs. `PI_CLI` can select the
+Pi Node entry point for smoke checks without relying on platform-specific shims.
+
+The [passing eight-job release-candidate matrix](https://github.com/onedotmint/Charterleaf/actions/runs/40078816360)
+checks the actual npm tarball after isolated installation, including byte equality,
+CLI commands and Core/Extension/recovery tests. Each Ubuntu job passes all 227 tests;
+each Windows job passes 220 with zero failures and seven platform-specific skips
+(one Linux/WSL path check, two POSIX permission checks and four SIGKILL checks).
+Windows symlink tests run, rather than being skipped. Host-compatible jobs also
+pass real Pi RPC loading/native selection, cancellation, mode changes, legacy
+migration and cross-branch/process persistence. RPC checks use isolated temporary
+projects/settings and make no model calls.
 
 The 0.4.1 organic-capture acceptance used real `deepseek/deepseek-flash` sessions
 in isolated Git projects. Actual tool results, approval records, specs, routing,
@@ -407,10 +440,13 @@ file snapshots/diffs, original tests and an independent exact-money oracle were
 checked, not just assistant claims. Empty-spec development and investigation,
 ordinary-query non-triggers, authoritative-document references, bug-versus-contract
 handling, cross-session reuse and mode/read-only/no-UI permissions all have passing
-evidence. **The strict matrix was not consistently all-green:** the latest focused
+evidence. **The earlier strict matrix was not consistently all-green:** a focused
 A→F1→F2 run passed A and F1, while F2 omitted its knowledge-completion comment and
 received one redundant fallback review. Its actual routing, code behavior and
-unchanged-spec checks passed. These bounded examples do not prove model reliability
+unchanged-spec checks passed. A later complete pre-0.4.2 run on the same model
+passed all 15 scenarios and 231 assertions, including F1/F2 without redundant reviews.
+The final Windows Git-root path fix was subsequently validated by cross-platform
+CI, not another paid model run. These bounded examples do not prove model reliability
 on every task or provider, or guarantee zero redundant reviews.
 
 The controlled organic-capture comparison (`scripts/context-smoke.js`) keeps cwd,
