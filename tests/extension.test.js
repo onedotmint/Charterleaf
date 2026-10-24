@@ -752,7 +752,7 @@ for (const mode of ['auto', 'confirm', 'reference', 'off']) {
     const before = p.git('status', '--porcelain');
     const legacy = p.read(CONFIG);
     assert.equal(readMode(p.root), mode);
-    assert.equal(modeConfigPath(p.root), p.file('.git/charterleaf.json'));
+    assert.equal(modeConfigPath(p.root), path.join(fs.realpathSync.native(p.file('.git')), 'charterleaf.json'));
     assert.deepEqual(JSON.parse(fs.readFileSync(modeConfigPath(p.root), 'utf8')), { version: 1, mode });
     assert.equal(p.read(CONFIG), legacy);
     assert.equal(p.git('status', '--porcelain'), before);
@@ -938,6 +938,19 @@ test('project helpers: real Git snapshots cover staged, deleted and untracked fi
   assert.deepEqual(changedSince(null, after), []);
   assert.deepEqual(changedSince(before, null), []);
   assert.equal(gitSnapshot(p.file('src')), null, 'nested path is not a repository root');
+});
+
+test('Git snapshots accept a filesystem alias of the repository root, not a nested directory', (t) => {
+  const p = project(t, { git: true });
+  const holder = project(t, { mode: null, specs: false });
+  const alias = holder.file('repo');
+  fs.symlinkSync(p.root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const before = gitSnapshot(alias);
+  assert.deepEqual([...before], []);
+  p.write(SOURCE, 'changed through the same repository');
+  assert.deepEqual(changedSince(before, gitSnapshot(alias)), [SOURCE]);
+  assert.deepEqual([...gitSnapshot(alias)], [...gitSnapshot(p.root)]);
+  assert.equal(gitSnapshot(p.file('src')), null);
 });
 
 test('regression: a spec read must not credit a newer version that was never delivered', async (t) => {
