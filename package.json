@@ -1,6 +1,6 @@
 {
   "name": "@onedotmint/charterleaf",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Lightweight Agent-Native Constraint Layer: opt-in spec discovery and maintenance for Pi, with a standalone zero-dependency CLI.",
   "license": "MIT",
   "repository": {
