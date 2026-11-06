@@ -65,7 +65,8 @@ module.exports = function charterleaf(pi) {
         s.budget -= size;
         s.staged.set(spec, hash);
       } else {
-        notes.push(`Read the complete ${spec} with read before modifying ${file}; automatic context budget reached.`);
+        const pages = Math.ceil(size / 8000);
+        notes.push(`Read the complete ${spec} (${size} bytes, ~${pages} page(s) via offset/limit) before modifying ${file}; it exceeds the ${size > 8000 ? '8 KB per-file limit' : 'per-task context budget'}.`);
       }
     }
     if (!result.scoped.length && !s.miss) {

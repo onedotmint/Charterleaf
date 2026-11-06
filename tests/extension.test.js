@@ -455,7 +455,7 @@ for (const options of [{ offset: 1 }, { limit: 20 }, { startLine: 1 }, { endLine
     await h.emit('context');
     const result = await h.emit('tool_call', h.call('write', { path: SOURCE }));
     assert.equal(result.block, true);
-    assert.match(result.reason, /Read the complete.*automatic context budget reached/);
+    assert.match(result.reason, /Read the complete.*exceeds the 8 KB per-file limit/);
   });
 }
 
@@ -1037,7 +1037,7 @@ test('context budget is bounded across specs and requires an explicit read for t
   const h = api(p);
   const first = await h.emit('tool_call', h.call('write', { path: SOURCE }));
   assert.equal(first.block, true);
-  assert.match(first.reason, /automatic context budget reached/);
+  assert.match(first.reason, /exceeds the per-task context budget/);
   const sibling = await h.emit('tool_call', h.call('write', { path: SOURCE }));
   assert.equal(sibling.block, true, 'siblings still cannot modify before context delivery');
   await h.emit('context');
@@ -1124,7 +1124,7 @@ test('repeated sibling routing does not debit the staged spec budget repeatedly'
   await h.emit('context');
   const next = await h.emit('tool_call', h.call('write', { path: 'src/next/file.js' }));
   assert.equal(next.block, true);
-  assert.doesNotMatch(next.reason, /automatic context budget reached/);
+  assert.doesNotMatch(next.reason, /exceeds the per-task context budget/);
   await h.emit('context');
   assert.equal(await h.emit('tool_call', h.call('write', { path: 'src/next/file.js' })), undefined);
 });
@@ -1871,3 +1871,20 @@ test('an exact inline terminal conclusion supersedes an earlier candidate withou
   await h.assistant('<!-- charterleaf: review -->\nCandidate examined. Existing routed authority already covers it. <!-- charterleaf: covered -->');
   assert.equal(await h.settle(), undefined);
 });
+
+
+for (const body of ['# Security\n\n> Never log tokens.\n', '# Never log tokens.\n']) {
+  test('quoted or heading-only constraints must be delivered before edits: ' + JSON.stringify(body), async (t) => {
+    const p = project(t);
+    fs.rmSync(p.file(SPEC));
+    p.write('specs/constitution.md', body);
+    const h = api(p);
+    const first = await h.emit('tool_call', h.call('write', { path: SOURCE }));
+    assert.equal(first.block, true);
+    assert.ok(first.reason.includes(body), 'the original constraint must reach the model');
+    const sibling = await h.emit('tool_call', h.call('write', { path: SOURCE }));
+    assert.equal(sibling.block, true, 'a sibling has not seen the constraint yet');
+    await h.emit('context');
+    assert.equal(await h.emit('tool_call', h.call('write', { path: SOURCE })), undefined);
+  });
+}

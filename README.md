@@ -39,7 +39,7 @@ pi install npm:@onedotmint/charterleaf
 For the standalone CLI, use `npm install -g @onedotmint/charterleaf`.
 For local development, use `pi install /absolute/path/to/charterleaf` (a package
 directory, not a `.tgz` file). To test the CLI from a local package, run `npm pack`
-then `npm install -g ./onedotmint-charterleaf-0.4.2.tgz`.
+then `npm install -g ./onedotmint-charterleaf-0.4.3.tgz`.
 
 Restart Pi or run `/reload` after installation, then use `/charterleaf` in each
 project you want to enable. To stop automation, choose **Not Enable** in that
@@ -206,8 +206,10 @@ workflow or another development cycle.
 
 ## CLI
 
-Charterleaf exposes exactly two deterministic commands. Run them from a
-repository root containing `specs/`:
+Charterleaf exposes exactly two deterministic commands. Run them from the project
+root or a subdirectory: the nearest ancestor containing `specs/` is used, without
+crossing a Git repository or worktree boundary. The target path remains
+repo-relative, not relative to the shell's current directory.
 
 ```bash
 charterleaf related <path>
@@ -424,7 +426,7 @@ GitHub Actions runs the installed-package suite on Ubuntu and Windows with Node
 CI makes no model calls and retains packaging/test logs. `PI_CLI` can select the
 Pi Node entry point for smoke checks without relying on platform-specific shims.
 
-The [passing eight-job release-candidate matrix](https://github.com/onedotmint/Charterleaf/actions/runs/40078816360)
+For v0.4.2, the [passing eight-job release-candidate matrix](https://github.com/onedotmint/Charterleaf/actions/runs/40078816360)
 checks the actual npm tarball after isolated installation, including byte equality,
 CLI commands and Core/Extension/recovery tests. Each Ubuntu job passes all 227 tests;
 each Windows job passes 220 with zero failures and seven platform-specific skips
@@ -447,7 +449,11 @@ unchanged-spec checks passed. A later complete pre-0.4.2 run on the same model
 passed all 15 scenarios and 231 assertions, including F1/F2 without redundant reviews.
 The final Windows Git-root path fix was subsequently validated by cross-platform
 CI, not another paid model run. These bounded examples do not prove model reliability
-on every task or provider, or guarantee zero redundant reviews.
+on every task or provider, or guarantee zero redundant reviews. A subsequent
+case-A rerun on `deepseek/deepseek-flash` failed knowledge-capture assertions on
+both the v0.4.2 baseline and the patch candidate: accounting tests passed, but
+the model concluded `covered` without writing a routed spec. Automatic knowledge
+capture remains model-dependent; passing structural tests does not prove it.
 
 The controlled organic-capture comparison (`scripts/context-smoke.js`) keeps cwd,
 package paths, prompt and native tools identical. On `deepseek/deepseek-flash`:

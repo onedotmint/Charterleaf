@@ -21,6 +21,11 @@ project state, workflow, memory, or scope-management capability.
 The CLI MUST expose only `related <path>` and `lint`, plus `--help`. Any
 other command MUST fail as an unknown command with a usage error.
 
+CLI commands MAY discover `specs/` from a subdirectory, but MUST stop at the
+nearest Git repository/worktree boundary. Target paths remain repo-relative.
+Core routing and lint APIs MUST use only the explicitly supplied project root;
+they MUST NOT inherit another project's specs from an ancestor.
+
 ### CLI-002 — Global constraints
 `related` MUST return `specs/constitution.md` as a Global constraint whenever
 that file exists, regardless of frontmatter, `id`, or `applies_to`.
@@ -28,7 +33,8 @@ that file exists, regardless of frontmatter, `id`, or `applies_to`.
 ### CLI-003 — Scoped routing
 `related` MUST route only living specs (`capabilities/`, `engineering/`) whose
 `applies_to` glob matches the supplied path, and MUST append active changes
-whose `affects` reference a matched spec id.
+whose `affects` reference a matched spec id. Glob matching MUST ignore path
+casing on native Windows and remain case-sensitive on other platforms.
 
 ### CLI-004 — Honest scoped miss
 When no living spec matches, `related` MUST state

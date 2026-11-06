@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { main, resolveRelated } = require('../lib/charterleaf.js');
+const { lint, main, resolveRelated } = require('../lib/charterleaf.js');
 
 const CAPABILITY = `---
 id: auth.session
@@ -138,6 +138,21 @@ test('related: validates CLI arguments', () => withProject((project) => {
   assert.match(result.err, /ERROR: related requires exactly one path/);
 }));
 
+test('related and lint resolve specs/ from a subdirectory of the project', () => withProject((project) => {
+  const nested = path.join(project.root, 'src', 'auth');
+  fs.mkdirSync(nested, { recursive: true });
+  const streams = () => {
+    let out = '';
+    return { out: () => out, stream: { stdout: { write: (c) => { out += c; } }, stderr: { write: (c) => { out += c; } } } };
+  };
+  const related = streams();
+  assert.equal(main(['related', 'src/auth/session.ts'], nested, related.stream), 0);
+  assert.match(related.out(), /specs\/capabilities\/auth\.md/);
+  const lint = streams();
+  assert.equal(main(['lint'], nested, lint.stream), 0);
+  assert.equal(lint.out(), '0 structural errors\n');
+}));
+
 test('related: missing specs directory is a runtime error', () => withProject((project) => {
   fs.rmSync(path.join(project.root, 'specs'), { recursive: true });
   const { code, out, err } = project.run('related', 'src/auth/session.ts');
@@ -216,6 +231,11 @@ test('related: Windows path normalization', () => withProject((project) => {
   const { code, out } = project.run('related', String.raw`src\auth\session.ts`);
   assert.equal(code, 0);
   assert.match(out, /specs\/capabilities\/auth\.md/);
+}));
+
+test('related: path casing is ignored only on Windows', () => withProject((project) => {
+  const result = resolveRelated('SRC/AUTH/session.ts', project.root);
+  assert.deepEqual(result.scoped, process.platform === 'win32' ? ['specs/capabilities/auth.md'] : []);
 }));
 
 test('related: living spec without applies_to is not routable', () => withProject((project) => {
@@ -622,4 +642,52 @@ AUTH-002
   const result = project.run('lint');
   assert.equal(result.code, 0, result.out);
   assert.equal(result.out, '0 structural errors\n');
+}));
+
+
+test('Core: explicit project roots never inherit ancestor specs', () => withProject((project) => {
+  const child = path.join(project.root, 'child');
+  fs.mkdirSync(child);
+  assert.throws(() => resolveRelated('src/auth/session.ts', child), /specs\/: not found/);
+  let errors = '';
+  assert.equal(lint(child, { stderr: { write(chunk) { errors += chunk; } } }), 2);
+  assert.match(errors, /specs\/: not found/);
+}));
+
+for (const marker of ['directory', 'file']) {
+  test('cli: spec discovery stops at a Git ' + marker + ' boundary', () => withProject((project) => {
+    const child = path.join(project.root, 'child');
+    const nested = path.join(child, 'src');
+    fs.mkdirSync(nested, { recursive: true });
+    if (marker === 'directory') fs.mkdirSync(path.join(child, '.git'));
+    else fs.writeFileSync(path.join(child, '.git'), 'gitdir: ../worktree-metadata\n');
+    for (const cwd of [child, nested]) {
+      for (const argv of [['related', 'src/auth/session.ts'], ['lint']]) {
+        let out = '', err = '';
+        const code = main(argv, cwd, {
+          stdout: { write(chunk) { out += chunk; } },
+          stderr: { write(chunk) { err += chunk; } },
+        });
+        assert.equal(code, 2);
+        assert.equal(out, '');
+        assert.match(err, /specs\/: not found/);
+      }
+    }
+    fs.mkdirSync(path.join(child, 'specs'));
+    assert.deepEqual(resolveRelated('src/auth/session.ts', child).scoped, []);
+    assert.equal(main(['lint'], nested, { stdout: { write() {} } }), 0);
+  }));
+}
+
+test('lint: unresolved template references remain errors', () => withProject((project) => {
+  project.write('specs/changes/draft.md', `---
+affects: [<existing.spec.id>]
+---
+## ADD
+### AUTH-003 — Token rotation
+The system MUST rotate tokens.
+`);
+  const result = project.run('lint');
+  assert.equal(result.code, 1);
+  assert.match(result.out, /unknown spec id <existing\.spec\.id>/);
 }));

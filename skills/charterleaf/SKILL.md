@@ -61,7 +61,9 @@ Use `specs/changes/<name>.md` only when an accepted future contract must coexist
 
 ## CLI details
 
-Run from the project root:
+Run from the project root or a subdirectory. CLI discovery stops at the nearest
+`specs/` directory or Git repository/worktree boundary; target paths stay
+repo-relative:
 
 - `charterleaf related <path>` returns constitution as Global, capability/engineering specs matching `applies_to`, and active changes affecting returned spec IDs. It returns paths/metadata, not bodies. Decisions and explicit references are followed manually when relevant. A scoped miss is not proof that no constraints apply.
 - `charterleaf lint` checks frontmatter, IDs/globs, duplicate IDs, change references/deltas and conflicting active changes. `0 structural errors` does not prove semantic correctness, coverage or code/spec agreement. The Extension also lints standard spec writes.
